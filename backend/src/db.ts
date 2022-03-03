@@ -17,6 +17,12 @@ interface Group {
     wp_selections: api.PilotWaypointSelections
 }
 
+export interface Client {
+    id: api.ID
+    secret_id: api.ID
+    authentic: boolean
+}
+
 
 class db_stub {
 
@@ -27,13 +33,83 @@ class db_stub {
     // pilot data
     pilot_telemetry: Record<api.ID, api.PilotTelemetry[]>;
 
+    // all registered pilot connections
+    _clients: Record<string, Client>;
+    _pilotToSocket: Record<api.ID, string>;
+
 
     constructor() {
         // initiate everything empty
         this.pilots = {};
         this.groups = {};
         this.pilot_telemetry = {};
+
+        this._clients = {};
+        this._pilotToSocket = {};
     }
+
+    // ========================================================================
+    // Socket / Client management
+    // ------------------------------------------------------------------------
+
+    // Do we have a viable connection to a pilot?
+    hasSocket(pilot_id: api.ID): boolean {
+        return this._pilotToSocket[pilot_id] != undefined; 
+    }
+    // Do we have a viable session for the pilot?
+    hasClient(socket: string): boolean {
+        return this._clients[socket] != undefined; 
+    }
+
+    isAuthed(socket: string): boolean {
+        if (this._clients[socket] != undefined) {
+            return this._clients[socket].authentic;
+        }
+        return false;
+    }
+
+    socketToPilot(socket: string): api.ID {
+        if (this.hasClient(socket)) {
+            return this._clients[socket].id;
+        } else {
+            return api.nullID;
+        }
+    }
+
+    findSocket(pilot_id: api.ID): string {
+        if (this.hasSocket(pilot_id)) return this._pilotToSocket[pilot_id];
+    }
+
+    clientDropped(socket: string) {
+        if (this.hasSocket(socket)) {
+            console.log(`${this._clients[socket].id}) dropped`);
+            if (this.hasClient(this._clients[socket].id)) {
+                delete this._pilotToSocket[this._clients[socket].id];
+            }
+            delete this._clients[socket];
+        }
+    }
+
+    newConnection(newClient: Client, socket: string) {
+        this._clients[socket] = newClient;
+        this._pilotToSocket[newClient.id] = socket;
+    }
+
+    checkSecret(socket: string, secret_id: api.ID) {
+        if (this.hasClient(socket)) {
+            return this._clients[socket].secret_id == secret_id;
+        } else {
+            return false;
+        }
+    }
+
+    updateProfile(pilot_id: api.ID, name: string, avatar: string) {
+        if (this.hasPilot(pilot_id)) {
+            this.pilots[pilot_id].name = name;
+            this.pilots[pilot_id].avatar = avatar;
+        }
+    }
+
 
     // ========================================================================
     // Pilot / Group Utils
