@@ -5,8 +5,7 @@ exports.hash_pilotMeta = exports.hash_flightPlanData = void 0;
 function hash_flightPlanData(plan) {
     // build long string
     let str = "Plan";
-    str += plan.name;
-    plan.waypoints.forEach((wp, i) => {
+    plan.forEach((wp, i) => {
         str += i + wp.name + (wp.optional ? "O" : "X");
         wp.geo.forEach((g) => {
             // large tolerance for floats

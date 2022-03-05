@@ -1,7 +1,7 @@
 "use strict";
 // TODO: add a real database here. For now this will just be realtime state
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.myDB = void 0;
+exports.db_stub = void 0;
 const uuid_1 = require("uuid");
 const api = require("./api");
 class db_stub {
@@ -10,6 +10,67 @@ class db_stub {
         this.pilots = {};
         this.groups = {};
         this.pilot_telemetry = {};
+        this._clients = {};
+        this._pilotToSocket = {};
+    }
+    // ========================================================================
+    // Socket / Client management
+    // ------------------------------------------------------------------------
+    // Do we have a viable connection to a pilot?
+    hasSocket(pilot_id) {
+        return this._pilotToSocket[pilot_id] != undefined;
+    }
+    // Do we have a viable session for the pilot?
+    hasClient(socket) {
+        return this._clients[socket] != undefined;
+    }
+    isAuthed(socket) {
+        if (this._clients[socket] != undefined) {
+            return this._clients[socket].authorized;
+        }
+        else {
+            console.warn(`Checked for auth on unrecognized socket: ${socket}`);
+            return false;
+        }
+    }
+    socketToPilot(socket) {
+        if (this.hasClient(socket)) {
+            return this._clients[socket].id;
+        }
+        else {
+            return api.nullID;
+        }
+    }
+    findSocket(pilot_id) {
+        if (this.hasSocket(pilot_id))
+            return this._pilotToSocket[pilot_id];
+    }
+    clientDropped(socket) {
+        if (this.hasSocket(socket)) {
+            console.log(`${this._clients[socket].id}) dropped`);
+            if (this.hasClient(this._clients[socket].id)) {
+                delete this._pilotToSocket[this._clients[socket].id];
+            }
+            delete this._clients[socket];
+        }
+    }
+    newConnection(newClient, socket) {
+        this._clients[socket] = newClient;
+        this._pilotToSocket[newClient.id] = socket;
+    }
+    checkSecret(socket, secret_id) {
+        if (this.hasClient(socket)) {
+            return this._clients[socket].secret_id == secret_id;
+        }
+        else {
+            return false;
+        }
+    }
+    updateProfile(pilot_id, name, avatar) {
+        if (this.hasPilot(pilot_id)) {
+            this.pilots[pilot_id].name = name;
+            this.pilots[pilot_id].avatar = avatar;
+        }
     }
     // ========================================================================
     // Pilot / Group Utils
@@ -77,7 +138,7 @@ class db_stub {
         if (!this.hasGroup(group_id)) {
             this.newGroup(group_id);
         }
-        if (exports.myDB.hasPilot(pilot_id)) {
+        if (this.hasPilot(pilot_id)) {
             this.groups[group_id].pilots.add(pilot_id);
             this.pilots[pilot_id].group_id = group_id;
             console.log(`${pilot_id}) joined group ${group_id}`);
@@ -140,5 +201,4 @@ class db_stub {
         this.pilot_telemetry[loc.pilot_id].push(loc);
     }
 }
-// singleton class representing a db interface
-exports.myDB = new db_stub();
+exports.db_stub = db_stub;

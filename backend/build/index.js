@@ -43,6 +43,8 @@ exports.lambdaHandler = void 0;
 // };
 const lambda_actions_1 = require("lambda-actions");
 const Actions = require("./actions");
+const aws_sdk_1 = require("aws-sdk");
+aws_sdk_1.config.update({ region: "us-west-1" });
 const lambdaHandler = (event, context) => __awaiter(void 0, void 0, void 0, function* () {
     console.log("Event: ", event);
     if (!event.requestContext) {
@@ -63,7 +65,6 @@ const lambdaHandler = (event, context) => __awaiter(void 0, void 0, void 0, func
         lambdaActions.action("groupInfoRequest", Actions.groupInfoRequest);
         lambdaActions.action("chatLogRequest", Actions.chatLogRequest);
         lambdaActions.action("joinGroupRequest", Actions.joinGroupRequest);
-        lambdaActions.action("leaveGroupRequest", Actions.leaveGroupRequest);
         lambdaActions.action("pilotsStatusRequest", Actions.pilotsStatusRequest);
         yield lambdaActions.fire({
             action: routeKey,

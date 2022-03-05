@@ -5,8 +5,7 @@ import * as api from "./api";
 export function hash_flightPlanData(plan: api.FlightPlanData): string {
     // build long string
     let str = "Plan";
-    str += plan.name;
-    plan.waypoints.forEach((wp, i) => {
+    plan.forEach((wp, i) => {
         str += i + wp.name + (wp.optional ? "O" : "X");
         wp.geo.forEach((g) => {
             // large tolerance for floats

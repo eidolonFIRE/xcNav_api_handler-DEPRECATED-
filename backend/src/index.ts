@@ -34,6 +34,11 @@
 
 import { LambdaActions } from 'lambda-actions';
 import * as Actions from './actions';
+import { config } from 'aws-sdk';
+
+config.update({region: "us-west-1"});
+
+
 
 export const lambdaHandler = async (event, context) => {
   
@@ -60,7 +65,6 @@ export const lambdaHandler = async (event, context) => {
     lambdaActions.action("groupInfoRequest", Actions.groupInfoRequest);
     lambdaActions.action("chatLogRequest", Actions.chatLogRequest);
     lambdaActions.action("joinGroupRequest", Actions.joinGroupRequest);
-    lambdaActions.action("leaveGroupRequest", Actions.leaveGroupRequest);
     lambdaActions.action("pilotsStatusRequest", Actions.pilotsStatusRequest);
 
     await lambdaActions.fire({

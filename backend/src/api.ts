@@ -2,7 +2,7 @@
 // | 
 // |  TODO: Version is incrimented manually for now, but in the future we should use formal versioning.
 // |  https://gitversion.readthedocs.io/en/latest/input/docs/configuration/
-export const api_version = 4.0;
+export const api_version = 5.0;
 
 
 
@@ -49,21 +49,12 @@ export interface Waypoint {
     length?: number
 }
 
-export interface FlightPlanData {
-    name: string
-    waypoints: Waypoint[]
-}
-
-export interface WaypointSelection {
-    plan: string
-    index: number
-    name: string
-}
+export type FlightPlanData = Waypoint[];
 
 export enum ErrorCode {
     success = 0,
     unknown_error = 1,
-    invalid_id,             // invalid "pilot_id" or "group_id"
+    invalid_id,             // invalid "pilot_id" or "group"
     invalid_secret_id,
     denied_group_access,    // IE. making requests for a group you aren't in
     missing_data,           // essential message data was left null
@@ -103,7 +94,7 @@ export let MarkerOptions = [
 
 export interface ChatMessage {
     timestamp: Timestamp
-    group_id: ID // target group
+    group: ID // target group
     pilot_id: ID // sender
     text: string
     emergency: boolean
@@ -143,7 +134,12 @@ export interface FlightPlanUpdate {
     new_index?: number   
 }
  
-export type PilotWaypointSelections = Record<ID, WaypointSelection>;
+export type PilotWaypointSelections = Record<ID, number>;
+
+export interface PilotSelectedWaypoint {
+    pilot_id: ID
+    index: number
+}
 
 
 
@@ -158,7 +154,7 @@ export interface PilotJoinedGroup {
 
 export interface PilotLeftGroup {
     pilot_id: ID
-    new_group_id: ID
+    new_group: ID
 }
 
 
@@ -187,7 +183,7 @@ export interface AuthResponse {
     pilot_id: ID   // public key
     pilot_meta_hash: string
     api_version: number
-    group_id: ID
+    group: ID
 }
 
 // ============================================================================
@@ -207,13 +203,12 @@ export interface UpdateProfileResponse {
 // Client request information on a group.
 // ----------------------------------------------------------------------------
 export interface GroupInfoRequest {
-    group_id: ID
+    group: ID
 }
 
 export interface GroupInfoResponse {
     status: ErrorCode
-    group_id: ID
-    map_layers: string[]  // json kml
+    group: ID
     pilots: PilotMeta[]
     flight_plan: FlightPlanData
 }
@@ -223,13 +218,13 @@ export interface GroupInfoResponse {
 // ----------------------------------------------------------------------------
 export interface ChatLogRequest {
     time_window: Duration
-    group_id: ID
+    group: ID
 }
 
 export interface ChatLogResponse {
     status: ErrorCode
     msgs: ChatMessage[]
-    group_id: ID
+    group: ID
 }
 
 // ============================================================================
@@ -237,12 +232,12 @@ export interface ChatLogResponse {
 //
 // ----------------------------------------------------------------------------
 export interface JoinGroupRequest {
-    group_id: ID
+    group: ID
 }
 
 export interface JoinGroupResponse {
     status: ErrorCode
-    group_id: ID
+    group: ID
 }
 
 // ============================================================================
@@ -257,7 +252,7 @@ export interface LeaveGroupRequest {
 
 export interface LeaveGroupResponse {
     status: ErrorCode
-    group_id: ID // new group user has created
+    group: ID // new group user has created
 }
 
 // ============================================================================

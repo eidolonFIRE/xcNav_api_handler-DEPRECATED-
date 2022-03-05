@@ -5,7 +5,7 @@ exports.MarkerOptions = exports.WaypointAction = exports.ErrorCode = exports.nul
 // | 
 // |  TODO: Version is incrimented manually for now, but in the future we should use formal versioning.
 // |  https://gitversion.readthedocs.io/en/latest/input/docs/configuration/
-exports.api_version = 4.0;
+exports.api_version = 5.0;
 exports.nullID = "";
 var ErrorCode;
 (function (ErrorCode) {

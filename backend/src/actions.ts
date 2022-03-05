@@ -3,12 +3,14 @@ import { v4 as uuidv4 } from "uuid";
 import * as _ from "lodash";
 
 import * as api from "./api";
-import { myDB, Client } from "./db";
+import { db_dynamo, Client, Pilot } from "./dynamoDB";
 import { hash_flightPlanData, hash_pilotMeta } from "./apiUtil";
 
 
 
 
+// singleton class representing a db interface
+const myDB = new db_dynamo();
 
 
 
@@ -25,12 +27,12 @@ import { hash_flightPlanData, hash_pilotMeta } from "./apiUtil";
 const ENDPOINT = 'cilme82sm3.execute-api.us-west-1.amazonaws.com/production/';
 const apiGateway = new ApiGatewayManagementApi({ endpoint: ENDPOINT });
 
-const sendToOne = async (socket: string, body: any) => {
+const sendToOne = async (socket: string, action: string, body: any) => {
     try {
         console.log("sendTo:", socket, JSON.stringify(body));
         await apiGateway.postToConnection({
             'ConnectionId': socket,
-            'Data': Buffer.from(JSON.stringify(body)),
+            'Data': Buffer.from(JSON.stringify({action: action, body: body})),
         }).promise();
     } catch (err) {
         console.error("sendTo", err);
@@ -38,28 +40,22 @@ const sendToOne = async (socket: string, body: any) => {
 };
 
 const sendToGroup = async (group_id: api.ID, action: string,  msg: any, fromSocket: string) => {
-    if (group_id != api.nullID && myDB.hasGroup(group_id)) {
-        console.log(`Group ${group_id} has ${myDB.groups[group_id].pilots.size} members`);
-        // await Promise.all(Object.keys(myDB.groups[group_id].pilots).map(async (p) => {
-        //     if (myDB.hasSocket(p) && myDB.findSocket(p) != fromSocket) {
-        //         console.log(`Sending to: ${p}`);
-        //         await sendToOne(myDB.findSocket(p), {action: action, body: msg});
-        //     } else {
-        //         console.log(`Not sending to: ${p}`);
-        //     }
-        // }));
+    if (group_id != api.nullID) {
+        const group = await myDB.fetchGroup(group_id);
+        console.log(`Group ${group} has ${group.pilots.size} members`);
+
         let all: Promise<void>[] = [];
-        myDB.groups[group_id].pilots.forEach(async (p) => {
-            if (myDB.hasSocket(p) && myDB.findSocket(p) != fromSocket) {
+        group.pilots.forEach(async (p) => {
+            const pilot = await myDB.fetchPilot(p);
+            if ((pilot.socket != undefined) && (pilot.socket != fromSocket)) {
                 all.push(new Promise(async () => {
                 
                     console.log(`Sending to: ${p}`);
-                    await sendToOne(myDB.findSocket(p), {action: action, body: msg});
+                    await sendToOne(pilot.socket, action, msg);
                 }));
             } else {
                 console.log(`Not sending to: ${p}`);
             }
-            
         });
         await Promise.all(all);
     } else {
@@ -97,41 +93,41 @@ export const $default = async (payload, socket: string) => {
 // handle chatMessage
 // ------------------------------------------------------------------------
 export const chatMessage = async (msg: api.ChatMessage, socket: string) => {
-    if (!myDB.isAuthed(socket)) {
-        console.error(`${socket}) is not authorized`);
-        return;
-    };
+    // TODO: replace auth method
+    // if (!myDB.isAuthed(socket)) {
+    //     console.error(`${socket}) is not authorized`);
+    //     return;
+    // };
 
     // fill in who message came from
     msg.pilot_id = myDB.socketToPilot(socket);
-    
-    console.log(`${myDB.socketToPilot(socket)}) Msg:`, msg);
+    console.log(`${msg.pilot_id}) Msg:`, msg);
     
     // if no group or invalid group, ignore message
     // TODO: also check pilot is actually in that group
-    if (msg.group_id == api.nullID || !myDB.hasGroup(msg.group_id)) {
-        console.log("Msg was dropped.");
+    if (msg.pilot_id == undefined) {
+        console.error("Error, we don't know who this socket belongs to!");
         return;
     }
 
     // record message into log
-    myDB.recordChat(msg);
+    // TODO
+    // myDB.recordChat(msg);
 
     // broadcast message to group
-    await sendToGroup(msg.group_id, "chatMessage", msg, socket);
+    await sendToGroup(msg.group, "chatMessage", msg, socket);
 };
 
 // ========================================================================
 // handle PilotTelemetry
 // ------------------------------------------------------------------------
 export const pilotTelemetry = async (msg: api.PilotTelemetry, socket: string) => {
-    if (!myDB.isAuthed(socket)) {
-        console.error(`${socket}) is not authorized`);
-        return;
-    };
+    // TODO: replace auth method
+    // if (!myDB.isAuthed(socket)) {
+    //     console.error(`${socket}) is not authorized`);
+    //     return;
+    // };
 
-    // TODO: Replace with better check
-    // if (!myDB.hasPilot(msg.pilot_id)) return;
     msg.pilot_id = myDB.socketToPilot(socket);
 
     // record the location
@@ -140,44 +136,47 @@ export const pilotTelemetry = async (msg: api.PilotTelemetry, socket: string) =>
 
     // if in group, broadcast location
     // TODO: only broadcast if it's recent location update?
-    const group_id = myDB.pilots[myDB.socketToPilot(socket)].group_id;
-    await sendToGroup(group_id, "pilotTelemetry", msg, socket);
+    const group = (await myDB.fetchPilot[myDB.socketToPilot(socket)]).group;
+    await sendToGroup(group, "pilotTelemetry", msg, socket);
 };
 
 // ========================================================================
 // handle Full copy of flight plan from client
 // ------------------------------------------------------------------------
 export const flightPlanSync = async (msg: api.FlightPlanSync, socket: string) => {
-    if (!myDB.isAuthed(socket)) {
-        console.error(`${socket}) is not authorized`);
-        return;
-    };
-    const group_id = myDB.pilots[myDB.socketToPilot(socket)].group_id;
-    if (group_id == api.nullID) return;
+    // TODO: replace auth method
+    // if (!myDB.isAuthed(socket)) {
+    //     console.error(`${socket}) is not authorized`);
+    //     return;
+    // };
+    const group = (await myDB.fetchPilot(myDB.socketToPilot(socket))).group;
+    if (group) {
+        // update the plan
+        // TODO: sanity check the data
+        myDB.pushFlightPlan(group, msg.flight_plan);
 
-    // update the plan
-    myDB.groups[group_id].flight_plan = msg.flight_plan;
-    // TODO: check the hash necessary here?
-
-    // relay the flight plan to the group
-    await sendToGroup(group_id, "flightPlanSync", msg, socket);
+        // relay the flight plan to the group
+        await sendToGroup(group, "flightPlanSync", msg, socket);
+    }
 };
 
 // ========================================================================
 // handle Flightplan Updates
 // ------------------------------------------------------------------------
 export const flightPlanUpdate = async (msg: api.FlightPlanUpdate, socket: string) => {
-    if (!myDB.isAuthed(socket)) {
-        console.error(`${socket}) is not authorized`);
-        return;
-    };
-    const group_id = myDB.pilots[myDB.socketToPilot(socket)].group_id;
-    if (group_id == api.nullID) return;
+    // TODO: replace auth method
+    // if (!myDB.isAuthed(socket)) {
+    //     console.error(`${socket}) is not authorized`);
+    //     return;
+    // };
+    const pilot = await myDB.fetchPilot(myDB.socketToPilot(socket));
+    if (pilot == undefined || pilot.group == api.nullID) return;
+    const group = await myDB.fetchGroup(pilot.group);
 
     console.log(`${myDB.socketToPilot(socket)}) Waypoint Update`, msg);
 
     // make backup copy of the plan
-    const plan = myDB.groups[group_id].flight_plan;
+    const plan = group.flight_plan;
     const backup = _.cloneDeep(plan);
 
     let should_notify = true;
@@ -187,23 +186,23 @@ export const flightPlanUpdate = async (msg: api.FlightPlanUpdate, socket: string
         case api.WaypointAction.delete:
             // Delete a waypoint
             // TODO: verify wp
-            plan.waypoints.splice(msg.index, 1);
+            plan.splice(msg.index, 1);
             break;
         case api.WaypointAction.new:
             // insert a new waypoint
-            plan.waypoints.splice(msg.index, 0, msg.data);
+            plan.splice(msg.index, 0, msg.data);
 
             break;
         case api.WaypointAction.sort:
             // Reorder a waypoint
-            const wp = plan.waypoints[msg.index];
-            plan.waypoints.splice(msg.index, 1);
-            plan.waypoints.splice(msg.new_index, 0, wp);
+            const wp = plan[msg.index];
+            plan.splice(msg.index, 1);
+            plan.splice(msg.new_index, 0, wp);
             break;
         case api.WaypointAction.modify:
             // Make updates to a waypoint
             if (msg.data != null) {
-                plan.waypoints[msg.index] = msg.data;
+                plan[msg.index] = msg.data;
             } else {
                 should_notify = false;
             }
@@ -219,7 +218,6 @@ export const flightPlanUpdate = async (msg: api.FlightPlanUpdate, socket: string
         // DE-SYNC ERROR
         // restore backup
         console.warn(`${myDB.socketToPilot(socket)}) Flightplan De-sync`, hash, msg.hash, plan);
-        myDB.groups[group_id].flight_plan = backup;
 
         // assume the client is out of sync, return a full copy of the plan
         const notify: api.FlightPlanSync = {
@@ -227,33 +225,35 @@ export const flightPlanUpdate = async (msg: api.FlightPlanUpdate, socket: string
             hash: hash_flightPlanData(backup),
             flight_plan: backup,
         }
-        await sendToOne(socket, {action: "flightPlanSync", body: notify});
+        await sendToOne(socket, "flightPlanSync", notify);
     } else if (should_notify) {
+        // push modified plan back to db
+        myDB.pushFlightPlan(pilot.group, plan);
+
         // relay the update to the group
-        await sendToGroup(group_id, "flightPlanUpdate", msg, socket);
+        await sendToGroup(pilot.group, "flightPlanUpdate", msg, socket);
     }
 };
 
 // ======================================================================== 
 // handle waypoint selections
 // ------------------------------------------------------------------------
-export const pilotWaypointSelections = async (msg: api.PilotWaypointSelections, socket: string) => {
-    if (!myDB.isAuthed(socket)) {
-        console.error(`${socket}) is not authorized`);
-        return;
-    };
-    const group_id = myDB.pilots[myDB.socketToPilot(socket)].group_id;
-    if (group_id == api.nullID) return;
+export const pilotSelectedWaypoint = async (msg: api.PilotSelectedWaypoint, socket: string) => {
+    // TODO: replace auth method
+    // if (!myDB.isAuthed(socket)) {
+    //     console.error(`${socket}) is not authorized`);
+    //     return;
+    // };
+    const pilot = await myDB.fetchPilot(myDB.socketToPilot(socket));
+    if (pilot.group == undefined || pilot.group == api.nullID) return;
 
     console.log(`${myDB.socketToPilot(socket)}) Waypoint Selection`, msg);
 
     // Save selection
-    Object.entries(msg).forEach(([pilot_id, wp_index]) => {
-        myDB.groups[group_id].wp_selections[pilot_id] = wp_index;
-    });
+    myDB.setPilotWaypointSelection(pilot.group, pilot.id, msg.index);
 
     // relay the update to the group
-    await sendToGroup(group_id, "pilotWaypointSelections", msg, socket);
+    await sendToGroup(pilot.group, "pilotSelectedWaypoint", msg, socket);
 };
 
 
@@ -272,8 +272,7 @@ export const authRequest = async (request: api.AuthRequest, socket: string) => {
     console.log(request);
     let newClient: Client = {
         id: api.nullID,
-        secret_id: api.nullID,
-        authentic: false,
+        authorized: false,
     };
 
     const resp: api.AuthResponse = {
@@ -282,44 +281,46 @@ export const authRequest = async (request: api.AuthRequest, socket: string) => {
         pilot_id: request.pilot.id,
         pilot_meta_hash: "",
         api_version: api.api_version,
-        group_id: api.nullID
+        group: api.nullID
     };
 
-    if (myDB.hasSocket(request.pilot.id) && !myDB.checkSecret(socket, request.secret_id)) {
+    const pilot = await myDB.fetchPilot(request.pilot.id);
+    if (pilot != undefined && myDB.checkSecret(pilot.id, request.secret_id)) {
         console.warn(`${request.pilot.id}) attempt multiple connection during register`);
         resp.status = api.ErrorCode.unknown_error;
     } else if (request.pilot.name == "") {
         resp.status = api.ErrorCode.missing_data;
     } else {
         // use or create an id
-        newClient.secret_id = request.secret_id || uuidv4();
         newClient.id = request.pilot.id || uuidv4().substr(24);
         console.log(`${newClient.id}) Authenticated`);
-        newClient.authentic = true;
+        newClient.authorized = true;
 
-        // update db
-        myDB.newPilot(request.pilot.name, newClient.id, newClient.secret_id, request.pilot.avatar);
+        // create a new group for the user
+        const newPilot: Pilot = {
+            id: newClient.id,
+            secret_id: request.secret_id || uuidv4(),
+            group: await myDB.addPilotToGroup(newClient.id, resp.group),
+            name: request.pilot.name,
+            avatar: request.pilot.avatar,
+            socket: socket,
+        }
+
+        // remember this connection
+        myDB.authConnection(
+            socket, 
+            newClient,
+            newPilot);
 
         // respond success
         resp.status = api.ErrorCode.success;
-        resp.secret_id = newClient.secret_id;
+        resp.secret_id = newPilot.secret_id;
         resp.pilot_id = newClient.id;
-        resp.pilot_meta_hash = hash_pilotMeta(myDB.pilots[newClient.id]);
+        resp.pilot_meta_hash = hash_pilotMeta(newPilot);        
 
-        // remember this connection
-        myDB.newConnection(newClient, socket);
 
-        // create a new group for the user
-        const old_group = myDB.findGroup(newClient.id);
-        if (old_group != api.nullID) {
-            console.log(`${newClient.id}) Rejoining group ${old_group}`);
-            resp.group_id = old_group;
-        } else {
-            resp.group_id = myDB.newGroup();
-            myDB.addPilotToGroup(newClient.id, resp.group_id);
-        }
     }
-    await sendToOne(socket, {action: "authResponse", body: resp});
+    await sendToOne(socket, "authResponse", resp);
 };
 
 
@@ -327,20 +328,21 @@ export const authRequest = async (request: api.AuthRequest, socket: string) => {
 // UpdateProfile
 // ------------------------------------------------------------------------
 export const updateProfileRequest = async (request: api.UpdateProfileRequest, socket: string) => {
-    if (!myDB.isAuthed(socket)) {
-        console.error(`${socket}) is not authorized`);
-        return;
-    };
+    // TODO: replace auth method
+    // if (!myDB.isAuthed(socket)) {
+    //     console.error(`${socket}) is not authorized`);
+    //     return;
+    // };
 
-    // check IDs
-    if (!myDB.hasPilot(request.pilot.id)) {
+    const pilot = await myDB.fetchPilot(request.pilot.id);
+    if (pilot == undefined) {
         // Unknown pilot.
         // Respond Error.
-        await sendToOne(socket, {action: "updateProfileResponse", body: {status: api.ErrorCode.invalid_id}});
-    } else if (!myDB.checkSecret(socket, request.secret_id)) {
+        await sendToOne(socket, "updateProfileResponse", {status: api.ErrorCode.invalid_id});
+    } else if (!myDB.checkSecret(pilot.id, request.secret_id)) {
         // Invalid secret_id
         // Respond Error.
-        await sendToOne(socket, {action: "updateProfileResponse", body: {status: api.ErrorCode.invalid_secret_id}});
+        await sendToOne(socket, "updateProfileResponse", {status: api.ErrorCode.invalid_secret_id});
     } else {
         // update
         console.log(`${myDB.socketToPilot(socket)}) Updated profile.`);
@@ -350,7 +352,7 @@ export const updateProfileRequest = async (request: api.UpdateProfileRequest, so
         // TODO: notify group?
 
         // Respond Success
-        await sendToOne(socket, {action: "updateProfileResponse", body: {status: api.ErrorCode.success}});
+        await sendToOne(socket, "updateProfileResponse", {status: api.ErrorCode.success});
     }
 };
 
@@ -359,42 +361,41 @@ export const updateProfileRequest = async (request: api.UpdateProfileRequest, so
 // Get Group Info
 // ------------------------------------------------------------------------
 export const groupInfoRequest = async (request: api.GroupInfoRequest, socket: string) => {
-    if (!myDB.isAuthed(socket)) {
-        console.error(`${socket}) is not authorized`);
-        return;
-    };
+    // TODO: replace auth method
+    // if (!myDB.isAuthed(socket)) {
+    //     console.error(`${socket}) is not authorized`);
+    //     return;
+    // };
     const resp: api.GroupInfoResponse = {
         status: api.ErrorCode.unknown_error,
-        group_id: request.group_id,
-        map_layers: [],
+        group: request.group,
         pilots: [],
-        flight_plan: null
+        flight_plan: []
     };
 
-    if (request.group_id == api.nullID || !myDB.hasGroup(request.group_id)) {
-        // Null or unknown group_id.
-        // Respond Error. 
-        resp.status = api.ErrorCode.invalid_id;
-    } else if (request.group_id != myDB.pilots[myDB.socketToPilot(socket)].group_id) {
-        // Pilot not in this group.
-        // Respond Error. 
-        resp.status = api.ErrorCode.denied_group_access;
-    } else {
+    const group = await myDB.fetchGroup(request.group);
+    if (group != undefined) {
         // Respond Success
         resp.status = api.ErrorCode.success;
-        resp.map_layers = myDB.groups[request.group_id].map_layers;
-        myDB.groups[request.group_id].pilots.forEach((p: api.ID) => {
-            const each_pilot: api.PilotMeta = {
-                id: p,
-                name: myDB.pilots[p].name,
-                avatar: myDB.pilots[p].avatar,
-            }
-            resp.pilots.push(each_pilot);
+        let all: Promise<void>[] = [];
+        group.pilots.forEach(async (p: api.ID) => {
+            all.push(new Promise(async () => {
+                const pilot = await myDB.fetchPilot(p);
+                if (pilot != null) {
+                    const each_pilot: api.PilotMeta = {
+                        id: pilot.id,
+                        name: pilot.name,
+                        avatar: pilot.avatar,
+                    }
+                    resp.pilots.push(each_pilot);
+                }
+            }));
         });
-        resp.flight_plan = myDB.groups[request.group_id].flight_plan;
+        await Promise.all(all);
+        resp.flight_plan = group.flight_plan;
     }
-    console.log(`${myDB.socketToPilot(socket)}) requested group (${request.group_id}) info : ${resp.status}`);
-    await sendToOne(socket, {action: "groupInfoResponse", body: resp});
+    console.log(`${myDB.socketToPilot(socket)}) requested group (${request.group}) info : ${resp.status}`);
+    await sendToOne(socket, "groupInfoResponse", resp);
 };
 
 
@@ -402,33 +403,32 @@ export const groupInfoRequest = async (request: api.GroupInfoRequest, socket: st
 // Get Chat Log
 // ------------------------------------------------------------------------
 export const chatLogRequest = async (request: api.ChatLogRequest, socket: string) => {
-    if (!myDB.isAuthed(socket)) {
-        console.error(`${socket}) is not authorized`);
-        return;
-    };
+    // TODO: replace auth method
+    // if (!myDB.isAuthed(socket)) {
+    //     console.error(`${socket}) is not authorized`);
+    //     return;
+    // };
 
-    console.log(`${myDB.socketToPilot(socket)}) Requested Chat Log from ${request.time_window.start} to ${request.time_window.end} for group_id ${request.group_id}`);
+    console.log(`${myDB.socketToPilot(socket)}) Requested Chat Log from ${request.time_window.start} to ${request.time_window.end} for group ${request.group}`);
 
     const resp: api.ChatLogResponse = {
         status: api.ErrorCode.unknown_error,
         msgs: [],
-        group_id: request.group_id,
+        group: request.group,
     };
 
-    if (request.group_id == api.nullID || !myDB.hasGroup(request.group_id)) {
-        // Null or unknown group_id.
+    const group = await myDB.fetchGroup(request.group);
+    if (group == undefined) {
+        // Null or unknown group.
         // Respond Error. 
         resp.status = api.ErrorCode.invalid_id;
-    } else if (request.group_id != myDB.pilots[myDB.socketToPilot(socket)].group_id) {
-        // Pilot not in this group.
-        // Respond Error. 
-        resp.status = api.ErrorCode.denied_group_access;
     } else {
         // Respond Success
-        resp.msgs = myDB.getChatLog(request.group_id, request.time_window);
+        // TODO:
+        // resp.msgs = myDB.getChatLog(request.group, request.time_window);
         resp.status = api.ErrorCode.success
     }        
-    await sendToOne(socket, {action: "chatLogResponse", body: resp});
+    await sendToOne(socket, "chatLogResponse", resp);
 };
 
 
@@ -436,136 +436,45 @@ export const chatLogRequest = async (request: api.ChatLogRequest, socket: string
 // user joins group
 // ------------------------------------------------------------------------
 export const joinGroupRequest = async (request: api.JoinGroupRequest, socket: string) => {
-    if (!myDB.isAuthed(socket)) {
-        console.error(`${socket}) is not authorized`);
-        return;
-    };
+    // TODO: replace auth method
+    // if (!myDB.isAuthed(socket)) {
+    //     console.error(`${socket}) is not authorized`);
+    //     return;
+    // };
     const resp: api.JoinGroupResponse = {
         status: api.ErrorCode.unknown_error,
-        group_id: api.nullID,
+        group: api.nullID,
     };
 
-    console.log(`${myDB.socketToPilot(socket)}) requesting to join group ${request.group_id}`)
+    const pilot = await myDB.fetchPilot(myDB.socketToPilot(socket));
 
-    if (myDB.hasGroup(request.group_id)) {
-        // join a group
-        if (request.group_id == myDB.pilots[myDB.socketToPilot(socket)].group_id) {
-            // already in this group
-            resp.status = api.ErrorCode.no_op;
-        } else {
-            resp.status = api.ErrorCode.success;
+    console.log(`${pilot.id}) requesting to join group ${request.group}`)
+
+    resp.group = await myDB.addPilotToGroup(pilot.id, request.group);
+    resp.status = api.ErrorCode.success;
+
+    // notify group there's a new pilot
+    const notify: api.PilotJoinedGroup = {
+        pilot: {
+            id: pilot.id,
+            name: pilot.name,
+            avatar: pilot.avatar,
         }
-        resp.group_id = request.group_id;
-        // TODO: joining directly on pilot is no longer supported.
-    // } else if (myDB.hasPilot(request.group_id) && myDB.hasClient(request.group_id)) {
-    //     // join on a pilot
-    //     resp.status = api.ErrorCode.success;
-    //     resp.group_id = myDB.pilots[request.group_id].group_id;
-
-    //     if (resp.group_id == api.nullID) {
-    //         // need to make a new group
-    //         resp.group_id = myDB.newGroup();
-    //         console.log(`${myDB.socketToPilot(socket)}) Form new group ${resp.group_id} on ${request.group_id}`);
-    //         myDB.addPilotToGroup(request.group_id, resp.group_id);
-
-    //         // notify the pilot they are in a group now
-    //         // TODO: we should have a dedicated message for this (don't overload the JoinGroupResponse like this)
-    //         const notify = {
-    //             status: api.ErrorCode.success,
-    //             group_id: resp.group_id,
-    //         } as api.JoinGroupResponse;
-    //         clients[request.group_id].sendToOne(socket, {action: "joinGroupResponse", body: notify});
-    //     }
-    } else if (request.group_id != null && request.group_id != api.nullID) {
-        // make the requested group
-        resp.status = api.ErrorCode.success;
-        resp.group_id = myDB.newGroup(request.group_id);
-    } else {
-        // bad group request. Can't make a new group with this id.
-        resp.status = api.ErrorCode.invalid_id;
-    }
-
-    // If ID match, join the group
-    if (resp.group_id != api.nullID) {
-        // check if pilot was already in a group
-        const prev_group = myDB.findGroup(myDB.socketToPilot(socket));
-        if (prev_group != api.nullID) {
-            // notify the old group
-            const notify = {
-                pilot_id: myDB.socketToPilot(socket),
-                // TODO: populate if split is prompted
-                new_group_id: api.nullID,
-            } as api.PilotLeftGroup;
-            await sendToGroup(prev_group, "pilotLeftGroup", notify, socket);
-            myDB.removePilotFromGroup(myDB.socketToPilot(socket));
-        }
-
-        // add pilot to group
-        myDB.addPilotToGroup(myDB.socketToPilot(socket), resp.group_id);
-        
-        // notify group there's a new pilot
-        const notify: api.PilotJoinedGroup = {
-            pilot: {
-                id: myDB.socketToPilot(socket),
-                name: myDB.pilots[myDB.socketToPilot(socket)].name,
-                avatar: myDB.pilots[myDB.socketToPilot(socket)].avatar,
-            }
-        };
-        await sendToGroup(resp.group_id, "pilotJoinedGroup", notify, socket);
-    }
-
-    await sendToOne(socket, {action: "joinGroupResponse", body: resp});
+    };
+    await sendToGroup(resp.group, "pilotJoinedGroup", notify, socket);
+    await sendToOne(socket, "joinGroupResponse", resp);
 };
 
-// ========================================================================
-// Leave Group
-// ------------------------------------------------------------------------
-export const leaveGroupRequest = async (request: api.LeaveGroupRequest, socket: string) => {
-    if (!myDB.isAuthed(socket)) {
-        console.error(`${socket}) is not authorized`);
-        return;
-    };
-    const resp: api.LeaveGroupResponse = {
-        status: api.ErrorCode.unknown_error,
-        group_id: api.nullID,
-    };
-
-    if (myDB.pilots[myDB.socketToPilot(socket)].group_id != api.nullID) {
-        resp.status = api.ErrorCode.success;
-        const notify = {
-            pilot_id: myDB.socketToPilot(socket),
-            new_group_id: api.nullID,
-        } as api.PilotLeftGroup;
-        const prev_group = myDB.pilots[myDB.socketToPilot(socket)].group_id;
-        // Leave the group
-        myDB.removePilotFromGroup(myDB.socketToPilot(socket))
-
-        resp.group_id = myDB.newGroup();
-        myDB.addPilotToGroup(myDB.socketToPilot(socket), resp.group_id);
-
-        if (request.prompt_split) {
-            // will let others know what new group pilot is joining
-            notify.new_group_id = resp.group_id;
-        }
-
-        // notify the group
-        await sendToGroup(prev_group, "pilotLeftGroup", notify, socket);
-    } else {
-        // Pilot isn't currently in a group.
-        // Return Error
-        resp.status = api.ErrorCode.no_op;
-    }
-    await sendToOne(socket, {action: "leaveGroupResponse", body: resp});
-};
 
 // ========================================================================
 // Pilots Status
 // ------------------------------------------------------------------------
 export const pilotsStatusRequest = async (request: api.PilotsStatusRequest, socket: string) => {
-    if (!myDB.isAuthed(socket)) {
-        console.error(`${socket}) is not authorized`);
-        return;
-    };
+    // TODO: replace auth method
+    // if (!myDB.isAuthed(socket)) {
+    //     console.error(`${socket}) is not authorized`);
+    //     return;
+    // };
     const resp: api.PilotsStatusResponse = {
         status: api.ErrorCode.missing_data,
         pilots_online: {}
@@ -577,6 +486,6 @@ export const pilotsStatusRequest = async (request: api.PilotsStatusRequest, sock
         // report "online" if we have authenticated connection with the pilot
         resp.pilots_online[pilot_id] = myDB.isAuthed(pilot_id);
     });
-    await sendToOne(socket, {action: "pilotsStatusResponse", body: resp});
+    await sendToOne(socket, "pilotsStatusResponse", resp);
 };
 
