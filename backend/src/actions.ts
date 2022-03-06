@@ -42,12 +42,17 @@ const sendToOne = async (socket: string, action: string, body: any) => {
 const sendToGroup = async (group_id: api.ID, action: string,  msg: any, fromSocket: string) => {
     if (group_id != api.nullID) {
         const group = await myDB.fetchGroup(group_id);
-        console.log(`Group ${group} has ${group.pilots.size} members`);
+        if (group == undefined) {
+            console.warn(`Group ${group_id} undefined`);
+            return;
+        }
+        console.log(group.pilots);
+        console.log(`Group ${group_id} has ${group.pilots.size} members`);
 
         let all: Promise<void>[] = [];
         group.pilots.forEach(async (p) => {
             const pilot = await myDB.fetchPilot(p);
-            if ((pilot.socket != undefined) && (pilot.socket != fromSocket)) {
+            if ((pilot != undefined) && (pilot.socket != undefined) && (pilot.socket != fromSocket)) {
                 all.push(new Promise(async () => {
                 
                     console.log(`Sending to: ${p}`);
@@ -132,7 +137,7 @@ export const pilotTelemetry = async (msg: api.PilotTelemetry, socket: string) =>
 
     // if in group, broadcast location
     // TODO: only broadcast if it's recent location update?
-    const group = (await myDB.fetchPilot(client.pilot_id)).group;
+    const group = (await myDB.fetchPilot(client.pilot_id)).group_id;
     await sendToGroup(group, "pilotTelemetry", msg, socket);
 };
 
@@ -144,7 +149,7 @@ export const flightPlanSync = async (msg: api.FlightPlanSync, socket: string) =>
     const client = await myDB.fetchSocketInfo(socket);
     if (client == undefined) return;
 
-    const group = (await myDB.fetchPilot(client.pilot_id)).group;
+    const group = (await myDB.fetchPilot(client.pilot_id)).group_id;
     if (group) {
         // update the plan
         // TODO: sanity check the data
@@ -164,8 +169,8 @@ export const flightPlanUpdate = async (msg: api.FlightPlanUpdate, socket: string
     if (client == undefined) return;
 
     const pilot = await myDB.fetchPilot(client.pilot_id);
-    if (pilot == undefined || pilot.group == api.nullID) return;
-    const group = await myDB.fetchGroup(pilot.group);
+    if (pilot == undefined || pilot.group_id == api.nullID) return;
+    const group = await myDB.fetchGroup(pilot.group_id);
 
     console.log(`${client.pilot_id}) Waypoint Update`, msg);
 
@@ -222,10 +227,10 @@ export const flightPlanUpdate = async (msg: api.FlightPlanUpdate, socket: string
         await sendToOne(socket, "flightPlanSync", notify);
     } else if (should_notify) {
         // push modified plan back to db
-        myDB.pushFlightPlan(pilot.group, plan);
+        myDB.pushFlightPlan(pilot.group_id, plan);
 
         // relay the update to the group
-        await sendToGroup(pilot.group, "flightPlanUpdate", msg, socket);
+        await sendToGroup(pilot.group_id, "flightPlanUpdate", msg, socket);
     }
 };
 
@@ -237,15 +242,15 @@ export const pilotSelectedWaypoint = async (msg: api.PilotSelectedWaypoint, sock
     const client = await myDB.fetchSocketInfo(socket);
     if (client == undefined) return;
     const pilot = await myDB.fetchPilot(client.pilot_id);
-    if (pilot.group == undefined || pilot.group == api.nullID) return;
+    if (pilot.group_id == undefined || pilot.group_id == api.nullID) return;
 
     console.log(`${client.pilot_id}) Waypoint Selection`, msg);
 
     // Save selection
-    myDB.setPilotWaypointSelection(pilot.group, pilot.id, msg.index);
+    myDB.setPilotWaypointSelection(pilot.group_id, pilot.id, msg.index);
 
     // relay the update to the group
-    await sendToGroup(pilot.group, "pilotSelectedWaypoint", msg, socket);
+    await sendToGroup(pilot.group_id, "pilotSelectedWaypoint", msg, socket);
 };
 
 
@@ -291,14 +296,14 @@ export const authRequest = async (request: api.AuthRequest, socket: string) => {
         const newPilot: Pilot = {
             id: newClient.pilot_id,
             secret_id: request.secret_id || uuidv4(),
-            group: await myDB.addPilotToGroup(newClient.pilot_id),
+            group_id: await myDB.addPilotToGroup(newClient.pilot_id),
             name: request.pilot.name,
             avatar: request.pilot.avatar,
             socket: socket,
         }
 
         // remember this connection
-        await myDB.authConnection(
+        await myDB.pushPilot(
             newClient,
             newPilot);
 
@@ -306,7 +311,7 @@ export const authRequest = async (request: api.AuthRequest, socket: string) => {
         resp.status = api.ErrorCode.success;
         resp.secret_id = newPilot.secret_id;
         resp.pilot_id = newClient.pilot_id;
-        resp.group = newPilot.group;
+        resp.group = newPilot.group_id;
         resp.pilot_meta_hash = hash_pilotMeta(newPilot);
     }
     await sendToOne(socket, "authResponse", resp);
@@ -334,7 +339,8 @@ export const updateProfileRequest = async (request: api.UpdateProfileRequest, so
         // update
         console.log(`${client.pilot_id}) Updated profile.`);
         // TODO: force a size limit on avatar
-        myDB.updateProfile(request.pilot.id, request.pilot.name, request.pilot.avatar);
+        // TODO: push whole pilot entry
+        // myDB.updateProfile(request.pilot.id, request.pilot.name, request.pilot.avatar);
 
         // TODO: notify group?
 
@@ -377,6 +383,7 @@ export const groupInfoRequest = async (request: api.GroupInfoRequest, socket: st
         });
         resp.pilots = await Promise.all(all);
         resp.flight_plan = group.flight_plan;
+        
     }
     console.log(`${client.pilot_id}) requested group (${request.group}) info : ${resp.status}, pilots: ${resp.pilots}`);
     await sendToOne(socket, "groupInfoResponse", resp);
@@ -421,6 +428,7 @@ export const joinGroupRequest = async (request: api.JoinGroupRequest, socket: st
     // Check Client Valid
     const client = await myDB.fetchSocketInfo(socket);
     if (client == undefined) return;
+
     const resp: api.JoinGroupResponse = {
         status: api.ErrorCode.unknown_error,
         group: api.nullID,
@@ -441,6 +449,7 @@ export const joinGroupRequest = async (request: api.JoinGroupRequest, socket: st
             avatar: pilot.avatar,
         }
     };
+
     await sendToGroup(resp.group, "pilotJoinedGroup", notify, socket);
     await sendToOne(socket, "joinGroupResponse", resp);
 };

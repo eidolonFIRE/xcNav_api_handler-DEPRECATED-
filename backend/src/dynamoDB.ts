@@ -6,7 +6,7 @@ import { DynamoDB } from 'aws-sdk';
 
 
 export interface Pilot extends api.PilotMeta {
-    group: api.ID
+    group_id: api.ID
     socket: string
     secret_id: string
 }
@@ -65,11 +65,17 @@ export class db_dynamo {
     }
 
     async fetchGroup(group_id: api.ID): Promise<Group> {
-        if (group_id != undefined) {
-            return (await this.db.get({
-                    TableName: "Groups", 
-                    Key: {id: group_id},
-                }).promise()).Item as Group;
+        if (group_id != undefined) {            
+            const _group = (await this.db.get({
+                TableName: "Groups", 
+                Key: {id: group_id},
+            }).promise()).Item;
+            return {
+                pilots: new Set(_group.pilots.values),
+                chat: _group.chat,
+                flight_plan: _group.flight_plan,
+                wp_selections: _group.wp_selections
+            } as Group;
         } else {
             return undefined;
         }
@@ -90,6 +96,24 @@ export class db_dynamo {
         }).promise();
     }
 
+    async pushPilot(client: Client, pilot: Pilot) {
+        await this.db.put({
+          TableName: "Pilots",
+          Item: {
+              id: pilot.id,
+              name: pilot.name,
+              avatar: pilot.avatar,
+              secret_id: pilot.secret_id,
+              socket: pilot.socket,
+              group_id: pilot.group_id
+          }
+        }, function(err, data) {
+            if (err) console.log(err);
+            // else console.log(data);
+        });
+        await this.setSocketInfo(client);
+    }
+
     async _pushPilotIntoGroup(pilot_id: api.ID, group_id: api.ID): Promise<Promise<any>[]> {
         if (pilot_id == undefined || pilot_id == api.nullID || group_id == undefined || group_id == api.nullID) {
             console.error(`Tried to push pilot ${pilot_id} into group ${group_id}`);
@@ -99,10 +123,8 @@ export class db_dynamo {
             // Update Group
             this.db.update({
                 TableName: "Groups",
-                Key: {
-                    id: group_id,
-                },
-                UpdateExpression : "ADD pilots :pilots",            
+                Key: {id: group_id},
+                UpdateExpression: "ADD pilots :pilots",            
                 ExpressionAttributeValues: {
                     ':pilots': this.db.createSet([pilot_id])             
                 },
@@ -112,11 +134,12 @@ export class db_dynamo {
             }).promise(),
 
             // Update Pilot
-            this.db.put({
+            this.db.update({
                 TableName: "Pilots",
-                Item: {
-                    id: pilot_id,
-                    group: group_id, 
+                Key: {id: pilot_id},
+                UpdateExpression: "SET group_id = :_group_id",
+                ExpressionAttributeValues: {
+                    ":_group_id": group_id
                 }
             }, function(err, data) {
                 if (err) console.log("Error updating pilot.group", err);
@@ -191,38 +214,6 @@ export class db_dynamo {
                 TableName: "Sockets",
                 Key: {socket: client.socket}
             });
-    }
-
-    authConnection(client: Client, pilot: Pilot) {
-        this.db.put({
-          TableName: "Pilots",
-          Item: {
-              id: pilot.id,
-              name: pilot.name,
-              avatar: pilot.avatar,
-              secret_id: pilot.secret_id,
-              socket: pilot.socket,
-            //   group: pilot.group   // Leaving this out for now... set later
-          }
-        }, function(err, data) {
-            if (err) console.log(err);
-            // else console.log(data);
-        });
-        this.setSocketInfo(client);
-    }
-
-    updateProfile(pilot_id: api.ID, name: string, avatar: string) {
-        this.db.put({
-            TableName: "Pilots",
-            Item: {
-                id: pilot_id,
-                name: name,
-                avatar: avatar
-            }
-        }, function(err, data) {
-            if (err) console.log(err);
-            // else console.log(data);
-        });
     }
 
 
