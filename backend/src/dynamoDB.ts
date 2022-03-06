@@ -19,8 +19,8 @@ export interface Group {
 }
 
 export interface Client {
-    id: api.ID
-    authorized: boolean
+    pilot_id: api.ID
+    socket: string
 }
 
 
@@ -34,45 +34,67 @@ export class db_dynamo {
     // pilot_telemetry: Record<api.ID, api.PilotTelemetry[]>;
 
     // all registered pilot connections
-    _socketInfo: Record<string, Client>;
     // _pilotToSocket: Record<api.ID, string>;
 
     db: DynamoDB.DocumentClient;
 
 
     constructor() {
-        // initiate everything empty
-        // this.pilots = {};
-        // this.groups = {};
-
-
-        this._socketInfo = {};
-        // this._pilotToSocket = {};
-
         this.db = new DynamoDB.DocumentClient({region: 'us-west-1'}); 
     }
 
     // ========================================================================
     // dynamoDB getters
     // ------------------------------------------------------------------------
-    async fetchPilot(pilot_id: api.ID): Promise<Pilot> {
+    async fetchSocketInfo(socket: string): Promise<Client> {
         return (await this.db.get({
-                TableName: "Pilots", 
-                Key: {"id": pilot_id},
-            }).promise()).Item as Pilot;
+            TableName: "Sockets", 
+            Key: {socket: socket},
+        }).promise()).Item as Client;
+    }
+
+    async fetchPilot(pilot_id: api.ID): Promise<Pilot> {
+        if (pilot_id != undefined) {
+            return (await this.db.get({
+                    TableName: "Pilots", 
+                    Key: {id: pilot_id},
+                }).promise()).Item as Pilot;
+        } else {
+            return undefined;
+        }
     }
 
     async fetchGroup(group_id: api.ID): Promise<Group> {
-        return (await this.db.get({
-                TableName: "Groups", 
-                Key: {"id": group_id},
-            }).promise()).Item as Group;
+        if (group_id != undefined) {
+            return (await this.db.get({
+                    TableName: "Groups", 
+                    Key: {id: group_id},
+                }).promise()).Item as Group;
+        } else {
+            return undefined;
+        }
     }
 
     // ========================================================================
     // dynamoDB setters
     // ------------------------------------------------------------------------
-    async pushPilotIntoGroup(pilot_id: api.ID, group_id: api.ID): Promise<Promise<any>[]> {
+    async setSocketInfo(client: Client): Promise<any> {
+        if (client.pilot_id == undefined || client.socket == undefined) return new Promise<void>(()=>{});
+        // Update Client
+        return this.db.put({
+            TableName: "Sockets",
+            Item: client
+        }, function(err, data) {
+            if (err) console.log(err);
+            // else console.log(data);
+        }).promise();
+    }
+
+    async _pushPilotIntoGroup(pilot_id: api.ID, group_id: api.ID): Promise<Promise<any>[]> {
+        if (pilot_id == undefined || pilot_id == api.nullID || group_id == undefined || group_id == api.nullID) {
+            console.error(`Tried to push pilot ${pilot_id} into group ${group_id}`);
+            return [];
+        }
         return [
             // Update Group
             this.db.update({
@@ -85,7 +107,7 @@ export class db_dynamo {
                     ':pilots': this.db.createSet([pilot_id])             
                 },
             }, function(err, data) {
-                if (err) console.log(err);
+                if (err) console.log("Error adding to group.pilots", err);
                 // else console.log(data);
             }).promise(),
 
@@ -97,7 +119,7 @@ export class db_dynamo {
                     group: group_id, 
                 }
             }, function(err, data) {
-                if (err) console.log(err);
+                if (err) console.log("Error updating pilot.group", err);
                 // else console.log(data);
             }).promise()
         ];
@@ -155,50 +177,38 @@ export class db_dynamo {
     // ========================================================================
     // Socket / Client management
     // ------------------------------------------------------------------------
-
-    isAuthed(socket: string): boolean {
-        if (this._socketInfo[socket] != undefined) {
-            return this._socketInfo[socket].authorized;
-        } else {
-            console.warn(`Checked for auth on unrecognized socket: ${socket}`);
-            return false;
-        }
+    clientDropped(client: Client) {
+        console.log(`${client.pilot_id}) dropped`);
+        // clear the socket
+        this.db.put({
+            TableName: "Pilots",
+            Item: {
+                id: client.pilot_id,
+                socket: "",
+            }
+            });
+        this.db.delete({
+                TableName: "Sockets",
+                Key: {socket: client.socket}
+            });
     }
 
-    socketToPilot(socket: string): api.ID {
-        if (this._socketInfo[socket] != undefined) {
-            return this._socketInfo[socket].id;
-        } else {
-            return api.nullID;
-        }
-    }
-
-
-    clientDropped(socket: string) {
-        if (this._socketInfo[socket] != undefined) {
-            const pilot_id = this._socketInfo[socket].id;
-            console.log(`${pilot_id}) dropped`);
-            // clear the socket
-            this.db.put({
-                TableName: "Pilots",
-                Item: {
-                    id: pilot_id,
-                    socket: socket,
-                }
-                });
-            delete this._socketInfo[socket];
-        }
-    }
-
-    authConnection(socket: string, client: Client, pilot: Pilot) {
+    authConnection(client: Client, pilot: Pilot) {
         this.db.put({
           TableName: "Pilots",
-          Item: pilot
+          Item: {
+              id: pilot.id,
+              name: pilot.name,
+              avatar: pilot.avatar,
+              secret_id: pilot.secret_id,
+              socket: pilot.socket,
+            //   group: pilot.group   // Leaving this out for now... set later
+          }
         }, function(err, data) {
             if (err) console.log(err);
             // else console.log(data);
         });
-        this._socketInfo[socket] = client;
+        this.setSocketInfo(client);
     }
 
     updateProfile(pilot_id: api.ID, name: string, avatar: string) {
@@ -223,7 +233,7 @@ export class db_dynamo {
         const _group_id = group_id || uuidv4().substr(0, 8);
 
         // TODO: make pilot leave previous group
-        this.pushPilotIntoGroup(pilot_id, group_id);
+        await Promise.all(await this._pushPilotIntoGroup(pilot_id, _group_id));
         return _group_id;
     }
 

@@ -54,7 +54,7 @@ export const lambdaHandler = async (event, context) => {
     const routeKey = event.requestContext.routeKey;
     const body = JSON.parse(event.body || '{}');
 
-     const lambdaActions = new LambdaActions();
+    const lambdaActions = new LambdaActions();
     lambdaActions.action('$connect', Actions.$connect);
     lambdaActions.action('$disconnect', Actions.$disconnect);
     lambdaActions.action('$default', Actions.$default);
