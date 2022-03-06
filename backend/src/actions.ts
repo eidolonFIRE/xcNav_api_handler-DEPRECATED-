@@ -50,17 +50,23 @@ const sendToGroup = async (group_id: api.ID, action: string,  msg: any, fromSock
         console.log(`Group ${group_id} has ${group.pilots.size} members`);
 
         let all: Promise<void>[] = [];
-        group.pilots.forEach(async (p) => {
-            const pilot = await myDB.fetchPilot(p);
-            if ((pilot != undefined) && (pilot.socket != undefined) && (pilot.socket != fromSocket)) {
-                all.push(new Promise(async () => {
-                
-                    console.log(`Sending to: ${p}`);
-                    await sendToOne(pilot.socket, action, msg);
-                }));
-            } else {
-                console.log(`Not sending to: ${p}`);
-            }
+        // Syncronously push a promise to the stack
+        group.pilots.forEach((p) => {
+            all.push(new Promise(async (resolve) => {
+                // In each promise, get the pilot first
+                const pilot = await myDB.fetchPilot(p);
+                // if the pilot is good and has a viable socket...
+                if ((pilot != undefined) && (pilot.socket != undefined) && (pilot.socket != fromSocket)) {
+                    // wait for the send to finish
+                    await sendToOne(pilot.socket, action, msg).then(() => {
+                        resolve();
+                    });
+                } else {
+                    console.log(`Not sending to: ${p}`);
+                    resolve();
+                }
+            }))
+            
         });
         await Promise.all(all);
     } else {
@@ -372,12 +378,12 @@ export const groupInfoRequest = async (request: api.GroupInfoRequest, socket: st
         Object.values(group.pilots).forEach(async (p: api.ID) => {
             const pilot = await myDB.fetchPilot(p);
             if (pilot != undefined) {
-                all.push(new Promise<api.PilotMeta>(async () => {
-                    return {
+                all.push(new Promise<api.PilotMeta>(async (resolve) => {
+                    resolve({
                         id: p,
                         name: pilot.name,
                         avatar: pilot.avatar,
-                    } as api.PilotMeta;
+                    } as api.PilotMeta);
                 }));
             }
         });
@@ -472,9 +478,10 @@ export const pilotsStatusRequest = async (request: api.PilotsStatusRequest, sock
     let all: Promise<void>[] = [];
     Object.values(request.pilot_ids).forEach(async (pilot_id: api.ID) => {
         // report "online" if we have authenticated connection with the pilot
-        all.push(new Promise(async () => {
+        all.push(new Promise(async (resolve) => {
             const pilot = await myDB.fetchPilot(pilot_id);
             resp.pilots_online[pilot_id] = pilot.socket != undefined;
+            resolve();
         }));
     });
     if (all.length > 0) resp.status = api.ErrorCode.success;

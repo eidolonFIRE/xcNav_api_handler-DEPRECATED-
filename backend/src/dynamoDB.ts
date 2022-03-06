@@ -85,7 +85,7 @@ export class db_dynamo {
     // dynamoDB setters
     // ------------------------------------------------------------------------
     async setSocketInfo(client: Client): Promise<any> {
-        if (client.pilot_id == undefined || client.socket == undefined) return new Promise<void>(()=>{});
+        if (client.pilot_id == undefined || client.socket == undefined) return new Promise<void>((resolve)=>{resolve()});
         // Update Client
         return this.db.put({
             TableName: "Sockets",

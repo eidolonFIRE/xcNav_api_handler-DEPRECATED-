@@ -42,11 +42,13 @@ config.update({region: "us-west-1"});
 
 export const lambdaHandler = async (event, context) => {
   
-  console.log("Event: ", event);
+  
 
   if (!event.requestContext) {
     return {};
   }
+
+  console.log("Event: ", event);
 
   try {
 
