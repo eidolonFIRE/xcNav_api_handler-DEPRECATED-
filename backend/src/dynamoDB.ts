@@ -70,12 +70,16 @@ export class db_dynamo {
                 TableName: "Groups", 
                 Key: {id: group_id},
             }).promise()).Item;
-            return {
-                pilots: new Set(_group.pilots.values),
-                chat: _group.chat,
-                flight_plan: _group.flight_plan,
-                wp_selections: _group.wp_selections
-            } as Group;
+            if (_group != undefined) {
+                return {
+                    pilots: new Set(_group.pilots.values),
+                    chat: _group.chat,
+                    flight_plan: JSON.parse(_group.flight_plan || "[]"),
+                    wp_selections: _group.wp_selections
+                } as Group;
+            } else {
+                return undefined;
+            }
         } else {
             return undefined;
         }
@@ -102,7 +106,7 @@ export class db_dynamo {
           Item: {
               id: pilot.id,
               name: pilot.name,
-              avatar: pilot.avatar,
+              avatar_hash: pilot.avatar_hash,
               secret_id: pilot.secret_id,
               socket: pilot.socket,
               group_id: pilot.group_id
@@ -119,6 +123,23 @@ export class db_dynamo {
             console.error(`Tried to push pilot ${pilot_id} into group ${group_id}`);
             return [];
         }
+
+        // check if group exists.
+        const group = await this.fetchGroup(group_id);
+        if (group == undefined) {
+            console.log(`Created group table: ${group_id}`);
+            await this.db.put({
+                TableName: "Groups",
+                Item: {
+                    id: group_id,
+                    wp_selections: {},
+                }
+            }, function(err, data) {
+                if (err) console.log(err);
+                // else console.log(data);
+            });
+        }
+
         return [
             // Update Group
             this.db.update({
@@ -126,7 +147,7 @@ export class db_dynamo {
                 Key: {id: group_id},
                 UpdateExpression: "ADD pilots :pilots",            
                 ExpressionAttributeValues: {
-                    ':pilots': this.db.createSet([pilot_id])             
+                    ':pilots': this.db.createSet([pilot_id]),  
                 },
             }, function(err, data) {
                 if (err) console.log("Error adding to group.pilots", err);
@@ -155,7 +176,7 @@ export class db_dynamo {
             Key: {
                 id: group_id,
             },
-            UpdateExpression : "DELET pilots :pilots",            
+            UpdateExpression: "DELETE pilots :pilots",            
             ExpressionAttributeValues: {
                 ':pilots': this.db.createSet([pilot_id])             
             },
@@ -167,11 +188,14 @@ export class db_dynamo {
 
     async pushFlightPlan(group_id: api.ID, plan: api.FlightPlanData): Promise<any> {
         // Update Pilot
-        return this.db.put({
+        return this.db.update({
             TableName: "Groups",
-            Item: {
+            Key: {
                 id: group_id,
-                flight_plan: plan 
+            },
+            UpdateExpression: "SET flight_plan = :_flight_plan",
+            ExpressionAttributeValues: {
+                ":_flight_plan": JSON.stringify(plan)
             }
         }, function(err, data) {
             if (err) console.log(err);
@@ -186,9 +210,11 @@ export class db_dynamo {
             Key: {
                 id: group_id,
             },
-            UpdateExpression : "SET wp_selections.#pilot_id = :index",            
-            ExpressionAttributeValues: {
+            UpdateExpression : "SET wp_selections.#pilot_id = :index",   
+            ExpressionAttributeNames: {
                 '#pilot_id': pilot_id,
+            },
+            ExpressionAttributeValues: {
                 ':index': index,
             },
         }, function(err, data) {
@@ -201,19 +227,21 @@ export class db_dynamo {
     // Socket / Client management
     // ------------------------------------------------------------------------
     clientDropped(client: Client) {
-        console.log(`${client.pilot_id}) dropped`);
-        // clear the socket
-        this.db.put({
-            TableName: "Pilots",
-            Item: {
-                id: client.pilot_id,
-                socket: "",
-            }
-            });
-        this.db.delete({
-                TableName: "Sockets",
-                Key: {socket: client.socket}
-            });
+        if (client != undefined) {
+            console.log(`${client.pilot_id}) dropped`);
+            // clear the socket
+            this.db.put({
+                TableName: "Pilots",
+                Item: {
+                    id: client.pilot_id,
+                    socket: "",
+                }
+                });
+            this.db.delete({
+                    TableName: "Sockets",
+                    Key: {socket: client.socket}
+                });
+        }
     }
 
 

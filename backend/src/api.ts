@@ -33,17 +33,12 @@ export const nullID = "";
 export interface PilotMeta {
     id: ID
     name: string
-    avatar: string // image in base64
-}
-
-export interface LatLngRaw {
-    lat: number
-    lng: number
+    avatar_hash: string
 }
 
 export interface Waypoint {
     name: string
-    geo: LatLngRaw[]
+    latlng: number[][]
     optional: boolean
     icon?: string
     length?: number
@@ -120,7 +115,6 @@ export interface RemoveMapLayer {
 // full sync of flight plan data
 export interface FlightPlanSync {
     timestamp: Timestamp
-    hash: string
     flight_plan: FlightPlanData
 }
 
@@ -175,6 +169,7 @@ export interface PilotLeftGroup {
 export interface AuthRequest {
     secret_id: ID
     pilot: PilotMeta
+    group: ID
 }
 
 export interface AuthResponse {

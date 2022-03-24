@@ -5,6 +5,7 @@ import * as _ from "lodash";
 import * as api from "./api";
 import { db_dynamo, Client, Pilot } from "./dynamoDB";
 import { hash_flightPlanData, hash_pilotMeta } from "./apiUtil";
+import { resolve } from 'path/posix';
 
 
 
@@ -46,12 +47,11 @@ const sendToGroup = async (group_id: api.ID, action: string,  msg: any, fromSock
             console.warn(`Group ${group_id} undefined`);
             return;
         }
-        console.log(group.pilots);
         console.log(`Group ${group_id} has ${group.pilots.size} members`);
 
         let all: Promise<void>[] = [];
         // Syncronously push a promise to the stack
-        group.pilots.forEach((p) => {
+        group.pilots.forEach((p: api.ID) => {
             all.push(new Promise(async (resolve) => {
                 // In each promise, get the pilot first
                 const pilot = await myDB.fetchPilot(p);
@@ -159,7 +159,7 @@ export const flightPlanSync = async (msg: api.FlightPlanSync, socket: string) =>
     if (group) {
         // update the plan
         // TODO: sanity check the data
-        myDB.pushFlightPlan(group, msg.flight_plan);
+        await myDB.pushFlightPlan(group, msg.flight_plan);
 
         // relay the flight plan to the group
         await sendToGroup(group, "flightPlanSync", msg, socket);
@@ -181,7 +181,7 @@ export const flightPlanUpdate = async (msg: api.FlightPlanUpdate, socket: string
     console.log(`${client.pilot_id}) Waypoint Update`, msg);
 
     // make backup copy of the plan
-    const plan = group.flight_plan;
+    const plan = group.flight_plan || [];
     const backup = _.cloneDeep(plan);
 
     let should_notify = true;
@@ -222,18 +222,18 @@ export const flightPlanUpdate = async (msg: api.FlightPlanUpdate, socket: string
     if (hash != msg.hash) {
         // DE-SYNC ERROR
         // restore backup
-        console.warn(`${client.pilot_id}) Flightplan De-sync`, hash, msg.hash, plan);
+        console.warn(`${client.pilot_id}) Flightplan Desync`, hash, msg.hash, plan);
 
         // assume the client is out of sync, return a full copy of the plan
         const notify: api.FlightPlanSync = {
             timestamp: Date.now(),
-            hash: hash_flightPlanData(backup),
+            // hash: hash_flightPlanData(backup),
             flight_plan: backup,
         }
         await sendToOne(socket, "flightPlanSync", notify);
     } else if (should_notify) {
         // push modified plan back to db
-        myDB.pushFlightPlan(pilot.group_id, plan);
+        await myDB.pushFlightPlan(pilot.group_id, plan);
 
         // relay the update to the group
         await sendToGroup(pilot.group_id, "flightPlanUpdate", msg, socket);
@@ -253,7 +253,7 @@ export const pilotSelectedWaypoint = async (msg: api.PilotSelectedWaypoint, sock
     console.log(`${client.pilot_id}) Waypoint Selection`, msg);
 
     // Save selection
-    myDB.setPilotWaypointSelection(pilot.group_id, pilot.id, msg.index);
+    await myDB.setPilotWaypointSelection(pilot.group_id, pilot.id, msg.index);
 
     // relay the update to the group
     await sendToGroup(pilot.group_id, "pilotSelectedWaypoint", msg, socket);
@@ -302,9 +302,9 @@ export const authRequest = async (request: api.AuthRequest, socket: string) => {
         const newPilot: Pilot = {
             id: newClient.pilot_id,
             secret_id: request.secret_id || uuidv4(),
-            group_id: await myDB.addPilotToGroup(newClient.pilot_id),
+            group_id: request.group || await myDB.addPilotToGroup(newClient.pilot_id),
             name: request.pilot.name,
-            avatar: request.pilot.avatar,
+            avatar_hash: request.pilot.avatar_hash,
             socket: socket,
         }
 
@@ -374,24 +374,24 @@ export const groupInfoRequest = async (request: api.GroupInfoRequest, socket: st
     if (group != undefined) {
         // Respond Success
         resp.status = api.ErrorCode.success;
-        let all: Promise<api.PilotMeta>[] = [];
-        Object.values(group.pilots).forEach(async (p: api.ID) => {
-            const pilot = await myDB.fetchPilot(p);
-            if (pilot != undefined) {
-                all.push(new Promise<api.PilotMeta>(async (resolve) => {
-                    resolve({
+        let all: Promise<void>[] = [];
+        group.pilots.forEach((p: api.ID) => {
+            all.push(new Promise<void>(async (resolve) => {
+                const pilot = await myDB.fetchPilot(p);
+                if (pilot != undefined) {
+                    resp.pilots.push({
                         id: p,
                         name: pilot.name,
-                        avatar: pilot.avatar,
+                        avatar_hash: pilot.avatar_hash,
                     } as api.PilotMeta);
-                }));
-            }
+                }
+                resolve();
+            }));
         });
-        resp.pilots = await Promise.all(all);
+        await Promise.all(all);
         resp.flight_plan = group.flight_plan;
-        
     }
-    console.log(`${client.pilot_id}) requested group (${request.group}) info : ${resp.status}, pilots: ${resp.pilots}`);
+    console.log(`${client.pilot_id}) requested group (${request.group}), status: ${resp.status}, pilots: ${resp.pilots}`);
     await sendToOne(socket, "groupInfoResponse", resp);
 };
 
@@ -452,7 +452,7 @@ export const joinGroupRequest = async (request: api.JoinGroupRequest, socket: st
         pilot: {
             id: pilot.id,
             name: pilot.name,
-            avatar: pilot.avatar,
+            avatar_hash: pilot.avatar_hash,
         }
     };
 
@@ -476,7 +476,7 @@ export const pilotsStatusRequest = async (request: api.PilotsStatusRequest, sock
 
     // bad IDs will simply be reported offline
     let all: Promise<void>[] = [];
-    Object.values(request.pilot_ids).forEach(async (pilot_id: api.ID) => {
+    Object.values(request.pilot_ids).forEach((pilot_id: api.ID) => {
         // report "online" if we have authenticated connection with the pilot
         all.push(new Promise(async (resolve) => {
             const pilot = await myDB.fetchPilot(pilot_id);

@@ -68,6 +68,9 @@ export const lambdaHandler = async (event, context) => {
     lambdaActions.action("chatLogRequest", Actions.chatLogRequest);
     lambdaActions.action("joinGroupRequest", Actions.joinGroupRequest);
     lambdaActions.action("pilotsStatusRequest", Actions.pilotsStatusRequest);
+    lambdaActions.action("flightPlanSync", Actions.flightPlanSync);
+    lambdaActions.action("flightPlanUpdate", Actions.flightPlanUpdate);
+    lambdaActions.action("pilotSelectedWaypoint", Actions.pilotSelectedWaypoint);
 
     await lambdaActions.fire({
       action: routeKey,
