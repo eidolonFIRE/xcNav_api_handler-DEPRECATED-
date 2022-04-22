@@ -195,7 +195,9 @@ export class db_dynamo {
             },
             UpdateExpression: "SET flight_plan = :_flight_plan",
             ExpressionAttributeValues: {
-                ":_flight_plan": JSON.stringify(plan)
+                ":_flight_plan": JSON.stringify(plan, (key, val) => {
+                    return typeof val === 'number' ? Number(val.toFixed(5)) : val;
+                  })
             }
         }, function(err, data) {
             if (err) console.log(err);

@@ -6,10 +6,10 @@ export function hash_flightPlanData(plan: api.FlightPlanData): string {
     // build long string
     let str = "Plan";
     plan.forEach((wp, i) => {
-        str += i + wp.name + (wp.optional ? "O" : "X");
+        str += i + wp.name + (wp.icon ?? "") + (wp.color ?? "") + (wp.optional ? "O" : "X");
         wp.latlng.forEach((g) => {
             // large tolerance for floats
-            str += g[0].toFixed(4) + g[1].toFixed(4);
+            str += g[0].toFixed(5) + g[1].toFixed(5);
         });
     });
     

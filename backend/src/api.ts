@@ -21,7 +21,7 @@ export interface Duration {
 }
 
 export interface Telemetry {
-    geoPos: GeolocationCoordinates
+    gps: any
     fuel: number      // Liters
     fuel_rate: number // L/hr
 }
@@ -41,6 +41,7 @@ export interface Waypoint {
     latlng: number[][]
     optional: boolean
     icon?: string
+    color?: number
     length?: number
 }
 
