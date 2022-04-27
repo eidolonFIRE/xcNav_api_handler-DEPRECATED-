@@ -332,7 +332,7 @@ export const updateProfileRequest = async (request: api.UpdateProfileRequest, so
     const client = await myDB.fetchSocketInfo(socket);
     if (client == undefined) return;
 
-    const pilot = await myDB.fetchPilot(request.pilot.id);
+    let pilot = await myDB.fetchPilot(request.pilot.id);
     if (pilot == undefined) {
         // Unknown pilot.
         // Respond Error.
@@ -344,11 +344,19 @@ export const updateProfileRequest = async (request: api.UpdateProfileRequest, so
     } else {
         // update
         console.log(`${client.pilot_id}) Updated profile.`);
-        // TODO: force a size limit on avatar
-        // TODO: push whole pilot entry
-        // myDB.updateProfile(request.pilot.id, request.pilot.name, request.pilot.avatar);
+        pilot.name = request.pilot.name;
+        pilot.avatar_hash = request.pilot.avatar_hash;
+        myDB.pushPilot(client, pilot);
 
-        // TODO: notify group?
+        // notify group of pilot update
+        const notify: api.PilotJoinedGroup = {
+            pilot: {
+                id: pilot.id,
+                name: pilot.name,
+                avatar_hash: pilot.avatar_hash,
+            }
+        };
+        await sendToGroup(pilot.group_id, "pilotJoinedGroup", notify, socket);
 
         // Respond Success
         await sendToOne(socket, "updateProfileResponse", {status: api.ErrorCode.success});
