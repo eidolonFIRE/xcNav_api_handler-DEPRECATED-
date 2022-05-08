@@ -276,7 +276,7 @@ export const authRequest = async (request: api.AuthRequest, socket: string) => {
     let newClient: Client = {
         pilot_id: api.nullID,
         socket: socket,
-        expires: Date.now() + 12 * 60 * 60
+        expires: Date.now() + 12 * 60 * 60 // 12 hr
     };
 
     const resp: api.AuthResponse = {
