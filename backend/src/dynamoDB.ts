@@ -21,6 +21,7 @@ export interface Group {
 export interface Client {
     pilot_id: api.ID
     socket: string
+    expires: number
 }
 
 
@@ -93,7 +94,7 @@ export class db_dynamo {
         // Update Client
         return this.db.put({
             TableName: "Sockets",
-            Item: client
+            Item: client,
         }, function(err, data) {
             if (err) console.log(err);
             // else console.log(data);
@@ -109,7 +110,8 @@ export class db_dynamo {
               avatar_hash: pilot.avatar_hash,
               secret_id: pilot.secret_id,
               socket: pilot.socket,
-              group_id: pilot.group_id
+              group_id: pilot.group_id,
+              expires: Date.now() + 12 * 60 * 60,
           }
         }, function(err, data) {
             if (err) console.log(err);
@@ -132,6 +134,7 @@ export class db_dynamo {
                 TableName: "Groups",
                 Item: {
                     id: group_id,
+                    expires: Date.now() + 12 * 60 * 60,
                     wp_selections: {},
                 }
             }, function(err, data) {
