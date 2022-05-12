@@ -299,11 +299,15 @@ export const authRequest = async (request: api.AuthRequest, socket: string) => {
         newClient.pilot_id = request.pilot.id || uuidv4().substr(24);
         console.log(`${newClient.pilot_id}) Authenticated`);
 
+        // Can't join a group if it's expired
+        const group = await myDB.fetchGroup(request.group);
+        if (group == undefined) request.group = undefined;
+
         // create a new group for the user
         const newPilot: Pilot = {
             id: newClient.pilot_id,
             secret_id: request.secret_id || uuidv4(),
-            group_id: request.group || await myDB.addPilotToGroup(newClient.pilot_id),
+            group_id: await myDB.addPilotToGroup(newClient.pilot_id, request.group),
             name: request.pilot.name,
             avatar_hash: request.pilot.avatar_hash,
             socket: socket,
