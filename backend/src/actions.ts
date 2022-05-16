@@ -457,7 +457,7 @@ export const joinGroupRequest = async (request: api.JoinGroupRequest, socket: st
 
     console.log(`${pilot.id}) requesting to join group ${request.group}`)
 
-    resp.group = await myDB.addPilotToGroup(pilot.id, request.group);
+    resp.group = await myDB.addPilotToGroup(pilot.id, request.group, pilot);
     resp.status = api.ErrorCode.success;
 
     // notify group there's a new pilot

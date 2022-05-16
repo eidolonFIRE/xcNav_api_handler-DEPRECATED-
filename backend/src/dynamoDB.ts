@@ -1,5 +1,3 @@
-// TODO: add a real database here. For now this will just be realtime state
-
 import { v4 as uuidv4 } from "uuid";
 import * as api from "./api";
 import { DynamoDB } from 'aws-sdk';
@@ -73,7 +71,7 @@ export class db_dynamo {
             }).promise()).Item;
             if (_group != undefined) {
                 return {
-                    pilots: new Set(_group.pilots.values),
+                    pilots: new Set(_group.pilots?.values || []),
                     chat: _group.chat,
                     flight_plan: JSON.parse(_group.flight_plan || "[]"),
                     wp_selections: _group.wp_selections
@@ -172,21 +170,43 @@ export class db_dynamo {
         ];
     }
 
-    async popPilotFromGroup(pilot_id: api.ID, group_id: api.ID): Promise<any> {
+    async _popPilotFromGroup(pilot_id: api.ID, group_id: api.ID): Promise<Promise<any>[]> {
         // Update Group
-        return this.db.update({
-            TableName: "Groups",
-            Key: {
-                id: group_id,
-            },
-            UpdateExpression: "DELETE pilots :pilots",            
-            ExpressionAttributeValues: {
-                ':pilots': this.db.createSet([pilot_id])             
-            },
-        }, function(err, data) {
-            if (err) console.log(err);
-            // else console.log(data);
-        }).promise();
+
+        const group = await this.fetchGroup(group_id);
+        if (group != undefined) {
+            return [
+                // Update Group
+                this.db.update({
+                    TableName: "Groups",
+                    Key: {
+                        id: group_id,
+                    },
+                    UpdateExpression: "DELETE pilots :pilots",
+                    ExpressionAttributeValues: {
+                        ':pilots': this.db.createSet([pilot_id])
+                    },
+                }, function(err, data) {
+                    if (err) console.log(err);
+                    // else console.log(data);
+                }).promise(),
+
+                // Update Pilot
+                this.db.update({
+                    TableName: "Pilots",
+                    Key: {id: pilot_id},
+                    UpdateExpression: "SET group_id = :_group_id",
+                    ExpressionAttributeValues: {
+                        ":_group_id": api.nullID
+                    }
+                }, function(err, data) {
+                    if (err) console.log("Error updating pilot.group", err);
+                    // else console.log(data);
+                }).promise()
+            ];
+        } else {
+            return [];
+        }
     }
 
     async pushFlightPlan(group_id: api.ID, plan: api.FlightPlanData): Promise<any> {
@@ -253,10 +273,14 @@ export class db_dynamo {
     // ========================================================================
     // Pilot / Group Utils
     // ------------------------------------------------------------------------
-    async addPilotToGroup(pilot_id: api.ID, group_id?: api.ID): Promise<api.ID> {
+    async addPilotToGroup(pilot_id: api.ID, group_id?: api.ID, pilot?: Pilot): Promise<api.ID> {
         const _group_id = group_id || uuidv4().substr(0, 8);
 
-        // TODO: make pilot leave previous group
+        // Remove pilot from current group (if applicable)
+        if (pilot != undefined && (pilot.group_id != null && pilot.group_id != api.nullID)) {
+            await Promise.all(await this._popPilotFromGroup(pilot.id, pilot.group_id));
+        }
+
         await Promise.all(await this._pushPilotIntoGroup(pilot_id, _group_id));
         return _group_id;
     }
