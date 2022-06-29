@@ -2,7 +2,7 @@
 // | 
 // |  TODO: Version is incrimented manually for now, but in the future we should use formal versioning.
 // |  https://gitversion.readthedocs.io/en/latest/input/docs/configuration/
-export const api_version = 5.1;
+export const api_version = 5.2;
 
 
 
@@ -34,6 +34,7 @@ export interface PilotMeta {
     id: ID
     name: string
     avatar_hash: string
+    tier?: string
 }
 
 export interface Waypoint {
@@ -171,6 +172,7 @@ export interface AuthRequest {
     secret_id: ID
     pilot: PilotMeta
     group: ID
+    tier_hash?: string
 }
 
 export interface AuthResponse {
@@ -180,6 +182,7 @@ export interface AuthResponse {
     pilot_meta_hash: string
     api_version: number
     group: ID
+    tier?: string
 }
 
 // ============================================================================

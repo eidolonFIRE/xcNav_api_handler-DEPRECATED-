@@ -25,7 +25,7 @@ export function hash_flightPlanData(plan: api.FlightPlanData): string {
 // Custom high-speed dirty hash
 export function hash_pilotMeta(pilot: api.PilotMeta): string {
     // build long string
-    const str = "Meta" + pilot.name + pilot.id + pilot.avatar_hash;
+    const str = "Meta" + pilot.name + pilot.id + pilot.avatar_hash + (pilot.tier || "");
     
     // fold string into hash
     let hash = 0;

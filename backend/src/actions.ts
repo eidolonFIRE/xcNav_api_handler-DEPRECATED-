@@ -6,6 +6,7 @@ import * as api from "./api";
 import { db_dynamo, Client, Pilot } from "./dynamoDB";
 import { hash_flightPlanData, hash_pilotMeta } from "./apiUtil";
 import { resolve } from 'path/posix';
+import { pullPatreonTable, userPledges } from './patreonLookup';
 
 
 
@@ -276,7 +277,7 @@ export const authRequest = async (request: api.AuthRequest, socket: string) => {
     let newClient: Client = {
         pilot_id: api.nullID,
         socket: socket,
-        expires: Date.now() + 12 * 60 * 60 // 12 hr
+        expires: Date.now() / 1000 + 12 * 60 * 60 // 12 hr
     };
 
     const resp: api.AuthResponse = {
@@ -299,6 +300,11 @@ export const authRequest = async (request: api.AuthRequest, socket: string) => {
         newClient.pilot_id = request.pilot.id || uuidv4().substr(24);
         console.log(`${newClient.pilot_id}) Authenticated`);
 
+        // Pull the patreon table if it's not already pulled
+        if (userPledges == null) await pullPatreonTable();
+        // fetch tier
+        resp.tier = userPledges[request.tier_hash];
+
         // Can't join a group if it's expired
         const group = await myDB.fetchGroup(request.group);
         if (group == undefined) request.group = undefined;
@@ -311,6 +317,7 @@ export const authRequest = async (request: api.AuthRequest, socket: string) => {
             name: request.pilot.name,
             avatar_hash: request.pilot.avatar_hash,
             socket: socket,
+            tier: resp.tier
         }
 
         // remember this connection
@@ -410,37 +417,6 @@ export const groupInfoRequest = async (request: api.GroupInfoRequest, socket: st
 
 
 // ========================================================================
-// Get Chat Log
-// ------------------------------------------------------------------------
-export const chatLogRequest = async (request: api.ChatLogRequest, socket: string) => {
-    // Check Client Valid
-    const client = await myDB.fetchSocketInfo(socket);
-    if (client == undefined) return;
-
-    console.log(`${client.pilot_id}) Requested Chat Log from ${request.time_window.start} to ${request.time_window.end} for group ${request.group}`);
-
-    const resp: api.ChatLogResponse = {
-        status: api.ErrorCode.unknown_error,
-        msgs: [],
-        group: request.group,
-    };
-
-    const group = await myDB.fetchGroup(request.group);
-    if (group == undefined) {
-        // Null or unknown group.
-        // Respond Error. 
-        resp.status = api.ErrorCode.invalid_id;
-    } else {
-        // Respond Success
-        // TODO:
-        // resp.msgs = myDB.getChatLog(request.group, request.time_window);
-        resp.status = api.ErrorCode.success
-    }        
-    await sendToOne(socket, "chatLogResponse", resp);
-};
-
-
-// ========================================================================
 // user joins group
 // ------------------------------------------------------------------------
 export const joinGroupRequest = async (request: api.JoinGroupRequest, socket: string) => {
@@ -472,33 +448,3 @@ export const joinGroupRequest = async (request: api.JoinGroupRequest, socket: st
     await sendToGroup(resp.group, "pilotJoinedGroup", notify, socket);
     await sendToOne(socket, "joinGroupResponse", resp);
 };
-
-
-// ========================================================================
-// Pilots Status
-// ------------------------------------------------------------------------
-export const pilotsStatusRequest = async (request: api.PilotsStatusRequest, socket: string) => {
-    // Check Client Valid
-    const client = await myDB.fetchSocketInfo(socket);
-    if (client == undefined) return;
-
-    const resp: api.PilotsStatusResponse = {
-        status: api.ErrorCode.missing_data,
-        pilots_online: {}
-    };
-
-    // bad IDs will simply be reported offline
-    let all: Promise<void>[] = [];
-    Object.values(request.pilot_ids).forEach((pilot_id: api.ID) => {
-        // report "online" if we have authenticated connection with the pilot
-        all.push(new Promise(async (resolve) => {
-            const pilot = await myDB.fetchPilot(pilot_id);
-            resp.pilots_online[pilot_id] = pilot.socket != undefined;
-            resolve();
-        }));
-    });
-    if (all.length > 0) resp.status = api.ErrorCode.success;
-    await Promise.all(all);
-    await sendToOne(socket, "pilotsStatusResponse", resp);
-};
-

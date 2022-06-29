@@ -109,7 +109,7 @@ export class db_dynamo {
               secret_id: pilot.secret_id,
               socket: pilot.socket,
               group_id: pilot.group_id,
-              expires: Date.now() + 30 * 24 * 60 * 60, // 30 days
+              expires: Date.now() / 1000 + 30 * 24 * 60 * 60, // 30 days
           }
         }, function(err, data) {
             if (err) console.log(err);
@@ -132,7 +132,7 @@ export class db_dynamo {
                 TableName: "Groups",
                 Item: {
                     id: group_id,
-                    expires: Date.now() + 12 * 60 * 60, // 12 hr
+                    expires: Date.now() / 1000 + 12 * 60 * 60, // 12 hr
                     wp_selections: {},
                 }
             }, function(err, data) {
