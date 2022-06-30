@@ -6,7 +6,7 @@ config.update({region: "us-west-1"});
 
 
 
-export const lambdaHandler = async (event, context) => {
+async function lambdaHandler(event, context) {
   
   
 
@@ -48,3 +48,6 @@ export const lambdaHandler = async (event, context) => {
 
   return {};
 };
+
+global.handler = lambdaHandler
+exports.handler = lambdaHandler

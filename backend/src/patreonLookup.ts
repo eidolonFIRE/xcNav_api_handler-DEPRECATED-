@@ -2,16 +2,25 @@ import { SSM } from 'aws-sdk';
 import CryptoJS from 'crypto-js';
 import { patreon } from 'patreon';
 
-let servmgr = new SSM();
+// let servmgr = new SSM();
+// async function getKey() {
+//     const ssm_params1 = {
+//         Name: 'patreonKey',
+//         WithDecryption: true,
+//     };
+//     return servmgr.getParameter(ssm_params1).promise();
+// }
+
+const client = new SSM(); // Instantiate the SSM client
 
 async function getKey() {
-    const ssm_params1 = {
+    
+    
+    return (await client.getParameter({
         Name: 'patreonKey',
-        WithDecryption: true,
-    };
-    return servmgr.getParameter(ssm_params1).promise();
+        WithDecryption: true // Ensures that SecureString params get decrypted
+    }).promise()).Parameter.Value; // Use async/await to synchronously wait for a response.
 }
-
 
 
 /// Table of hashed email+name to lookup pledged tier
@@ -19,8 +28,8 @@ export let userPledges = undefined
 
 
 export async function pullPatreonTable() {
-    console.log("KEY:", await (await getKey()).$response.data["secretKey"]);
-    const patreonAPIClient = patreon(await (await getKey()).$response.data["secretKey"]);
+    console.log("KEY:", await getKey());
+    const patreonAPIClient = patreon(await getKey());
     return patreonAPIClient('/campaigns/8686377/pledges')
         .then(({ store }) => {
             let userEmails = {}

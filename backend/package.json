@@ -11,18 +11,23 @@
     "crypto-js": "^4.1.1",
     "lambda-actions": "^1.0.0-rc.1",
     "lodash": "^4.17.21",
+    "node-polyfill-webpack-plugin": "^2.0.0",
     "patreon": "^0.4.1"
   },
   "scripts": {
     "test": "mocha tests/unit/",
-    "build": "tsc"
+    "build": "npx webpack"
   },
   "devDependencies": {
+    "2": "^3.0.0",
     "@types/aws-lambda": "^8.10.92",
     "@types/node": "^17.0.21",
     "aws-sdk": "^2.1082.0",
     "chai": "^4.2.0",
     "mocha": "^9.1.4",
-    "typescript": "^4.5.5"
+    "ts-loader": "^9.3.1",
+    "typescript": "^4.5.5",
+    "webpack": "^5.73.0",
+    "webpack-cli": "^4.10.0"
   }
 }
