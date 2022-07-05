@@ -22,52 +22,93 @@ export interface Client {
     expires: number
 }
 
+interface CachedPilot {
+    pilot: Pilot
+    timestamp: number
+}
+
+interface CachedClient {
+    client: Client
+    timestamp: number
+}
+
 
 export class db_dynamo {
 
-    // tables: pilot / groups
-    // pilots: Record<api.ID, Pilot>;
-    // groups: Record<api.ID, Group>;
+    db: DynamoDB.DocumentClient
 
-    // pilot data
-    // pilot_telemetry: Record<api.ID, api.PilotTelemetry[]>;
-
-    // all registered pilot connections
-    // _pilotToSocket: Record<api.ID, string>;
-
-    db: DynamoDB.DocumentClient;
+    // Caches
+    pilotCache: Record<api.ID, CachedPilot>
+    clientCache: Record<string, CachedClient>
 
 
     constructor() {
-        this.db = new DynamoDB.DocumentClient({region: 'us-west-1'}); 
+        this.db = new DynamoDB.DocumentClient({ region: 'us-west-1' });
+        this.pilotCache = {}
+        this.clientCache = {}
+    }
+
+    // ========================================================================
+    // cache macros
+    // ------------------------------------------------------------------------
+    invalidateClientCache(socket: string): void {
+        if (socket in this.clientCache) delete this.clientCache[socket];
+    }
+
+    invalidatePilotCache(id: api.ID): void {
+        if (id in this.pilotCache) delete this.pilotCache[id];
+    }
+
+    writeClientCache(socket: string, client: Client): void {
+        this.clientCache[socket] = { client: client, timestamp: Date.now() / 1000 } as CachedClient;
+    }
+
+    writePilotCache(id: api.ID, pilot: Pilot): void {
+        this.pilotCache[id] = { pilot: pilot, timestamp: Date.now() / 1000 } as CachedPilot;
     }
 
     // ========================================================================
     // dynamoDB getters
     // ------------------------------------------------------------------------
-    async fetchSocketInfo(socket: string): Promise<Client> {
-        return (await this.db.get({
-            TableName: "Sockets", 
-            Key: {socket: socket},
-        }).promise()).Item as Client;
+    async fetchClientInfo(socket: string): Promise<Client> {
+        if (socket in this.clientCache && this.clientCache[socket].timestamp > (Date.now() / 1000 - 60)) {
+            // Cache Hit
+            return this.clientCache[socket].client;
+        } else {
+            // Cache Miss
+            const _c = (await this.db.get({
+                TableName: "Sockets",
+                Key: { socket: socket },
+            }).promise()).Item as Client;
+            this.writeClientCache(socket, _c);
+            return _c;
+        }
     }
 
     async fetchPilot(pilot_id: api.ID): Promise<Pilot> {
         if (pilot_id != undefined) {
-            return (await this.db.get({
-                    TableName: "Pilots", 
-                    Key: {id: pilot_id},
+            if (pilot_id in this.pilotCache && this.pilotCache[pilot_id].timestamp > (Date.now() / 1000 - 60)) {
+                // Cache Hit
+                return this.pilotCache[pilot_id].pilot;
+            } else {
+                // Cache Miss
+                const _p = (await this.db.get({
+                    TableName: "Pilots",
+                    Key: { id: pilot_id },
                 }).promise()).Item as Pilot;
+                this.writePilotCache(pilot_id, _p);
+                return _p;
+            }
         } else {
             return undefined;
         }
     }
 
     async fetchGroup(group_id: api.ID): Promise<Group> {
-        if (group_id != undefined) {            
+        if (group_id != undefined) {
             const _group = (await this.db.get({
-                TableName: "Groups", 
-                Key: {id: group_id},
+                TableName: "Groups",
+                Key: { id: group_id },
             }).promise()).Item;
             if (_group != undefined) {
                 return {
@@ -88,30 +129,33 @@ export class db_dynamo {
     // dynamoDB setters
     // ------------------------------------------------------------------------
     async setSocketInfo(client: Client): Promise<any> {
-        if (client.pilot_id == undefined || client.socket == undefined) return new Promise<void>((resolve)=>{resolve()});
+        if (client.pilot_id == undefined || client.socket == undefined) return new Promise<void>((resolve) => { resolve() });
+        this.writeClientCache(client.socket, client);
         // Update Client
         return this.db.put({
             TableName: "Sockets",
             Item: client,
-        }, function(err, data) {
+        }, function (err, data) {
             if (err) console.log(err);
             // else console.log(data);
         }).promise();
     }
 
     async pushPilot(client: Client, pilot: Pilot) {
+        this.writePilotCache(pilot.id, pilot);
         await this.db.put({
-          TableName: "Pilots",
-          Item: {
-              id: pilot.id,
-              name: pilot.name,
-              avatar_hash: pilot.avatar_hash,
-              secret_id: pilot.secret_id,
-              socket: pilot.socket,
-              group_id: pilot.group_id,
-              expires: Date.now() / 1000 + 30 * 24 * 60 * 60, // 30 days
-          }
-        }, function(err, data) {
+            TableName: "Pilots",
+            Item: {
+                id: pilot.id,
+                name: pilot.name,
+                avatar_hash: pilot.avatar_hash,
+                secret_id: pilot.secret_id,
+                socket: pilot.socket,
+                group_id: pilot.group_id,
+                tier: pilot.tier,
+                expires: Date.now() / 1000 + 30 * 24 * 60 * 60, // 30 days
+            }
+        }, function (err, data) {
             if (err) console.log(err);
             // else console.log(data);
         });
@@ -135,7 +179,7 @@ export class db_dynamo {
                     expires: Date.now() / 1000 + 12 * 60 * 60, // 12 hr
                     wp_selections: {},
                 }
-            }, function(err, data) {
+            }, function (err, data) {
                 if (err) console.log(err);
                 // else console.log(data);
             });
@@ -145,12 +189,12 @@ export class db_dynamo {
             // Update Group
             this.db.update({
                 TableName: "Groups",
-                Key: {id: group_id},
-                UpdateExpression: "ADD pilots :pilots",            
+                Key: { id: group_id },
+                UpdateExpression: "ADD pilots :pilots",
                 ExpressionAttributeValues: {
-                    ':pilots': this.db.createSet([pilot_id]),  
+                    ':pilots': this.db.createSet([pilot_id]),
                 },
-            }, function(err, data) {
+            }, function (err, data) {
                 if (err) console.log("Error adding to group.pilots", err);
                 // else console.log(data);
             }).promise(),
@@ -158,12 +202,12 @@ export class db_dynamo {
             // Update Pilot
             this.db.update({
                 TableName: "Pilots",
-                Key: {id: pilot_id},
+                Key: { id: pilot_id },
                 UpdateExpression: "SET group_id = :_group_id",
                 ExpressionAttributeValues: {
                     ":_group_id": group_id
                 }
-            }, function(err, data) {
+            }, function (err, data) {
                 if (err) console.log("Error updating pilot.group", err);
                 // else console.log(data);
             }).promise()
@@ -186,7 +230,7 @@ export class db_dynamo {
                     ExpressionAttributeValues: {
                         ':pilots': this.db.createSet([pilot_id])
                     },
-                }, function(err, data) {
+                }, function (err, data) {
                     if (err) console.log(err);
                     // else console.log(data);
                 }).promise(),
@@ -194,12 +238,12 @@ export class db_dynamo {
                 // Update Pilot
                 this.db.update({
                     TableName: "Pilots",
-                    Key: {id: pilot_id},
+                    Key: { id: pilot_id },
                     UpdateExpression: "SET group_id = :_group_id",
                     ExpressionAttributeValues: {
                         ":_group_id": api.nullID
                     }
-                }, function(err, data) {
+                }, function (err, data) {
                     if (err) console.log("Error updating pilot.group", err);
                     // else console.log(data);
                 }).promise()
@@ -220,9 +264,9 @@ export class db_dynamo {
             ExpressionAttributeValues: {
                 ":_flight_plan": JSON.stringify(plan, (key, val) => {
                     return typeof val === 'number' ? Number(val.toFixed(5)) : val;
-                  })
+                })
             }
-        }, function(err, data) {
+        }, function (err, data) {
             if (err) console.log(err);
             // else console.log(data);
         }).promise();
@@ -235,14 +279,14 @@ export class db_dynamo {
             Key: {
                 id: group_id,
             },
-            UpdateExpression : "SET wp_selections.#pilot_id = :index",   
+            UpdateExpression: "SET wp_selections.#pilot_id = :index",
             ExpressionAttributeNames: {
                 '#pilot_id': pilot_id,
             },
             ExpressionAttributeValues: {
                 ':index': index,
             },
-        }, function(err, data) {
+        }, function (err, data) {
             if (err) console.log(err);
             // else console.log(data);
         }).promise();
@@ -254,6 +298,10 @@ export class db_dynamo {
     clientDropped(client: Client) {
         if (client != undefined) {
             console.log(`${client.pilot_id}) dropped`);
+
+            this.invalidateClientCache(client.socket);
+            this.invalidatePilotCache(client.pilot_id);
+
             // clear the socket
             this.db.put({
                 TableName: "Pilots",
@@ -261,11 +309,11 @@ export class db_dynamo {
                     id: client.pilot_id,
                     socket: "",
                 }
-                });
+            });
             this.db.delete({
-                    TableName: "Sockets",
-                    Key: {socket: client.socket}
-                });
+                TableName: "Sockets",
+                Key: { socket: client.socket }
+            });
         }
     }
 
@@ -289,53 +337,4 @@ export class db_dynamo {
         const pilot = await this.fetchPilot(pilot_id);
         return pilot_id != undefined && secret != undefined && pilot.secret_id == secret;
     }
-
-
-    // TODO
-    // // ========================================================================
-    // // Chat
-    // // ------------------------------------------------------------------------
-    // recordChat(msg: api.ChatMessage) {
-    //     // TODO: preserve indexing and order by timestamp
-    //     this.groups[msg.group_id].chat.push(msg);
-    // }
-
-    // getChatLog(group_id: api.ID, duration: api.Duration): api.ChatMessage[] {
-    //     if (!this.hasGroup(group_id)) {
-    //         console.error("Group does not exist!");
-    //         return [];
-    //     }
-
-    //     function bisect(v: api.ChatMessage[], t: api.Timestamp): number
-    //     {
-    //         let low = 0;
-    //         let mid = 0;
-    //         let high = v.length - 1;
-     
-    //         while (low <= high) {
-    //             mid = (low + high) / 2;
-     
-    //             if(t < v[mid].timestamp) {
-    //                 high = mid - 1;
-    //             } else if(t > v[mid].timestamp) {
-    //                 low = mid + 1;
-    //             } else {
-    //                 return mid;
-    //             }
-    //         }
-    //         // default to start
-    //         return 0;
-    //     }
-
-    //     // find start and end index
-    //     const log = this.groups[group_id].chat;
-    //     const start = bisect(log, duration.start);
-    //     const end = bisect(log, duration.end);
-
-    //     // return slice
-    //     return log.slice(start, end);
-    // }
 }
-
-
-

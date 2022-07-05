@@ -5,15 +5,14 @@ import * as _ from "lodash";
 import * as api from "./api";
 import { db_dynamo, Client, Pilot } from "./dynamoDB";
 import { hash_flightPlanData, hash_pilotMeta } from "./apiUtil";
-import { resolve } from 'path/posix';
-import { pullPatreonTable, userPledges } from './patreonLookup';
+import { patreonLUT } from './patreonLookup';
 
 
 
 
 // singleton class representing a db interface
 const myDB = new db_dynamo();
-
+const patreon = new patreonLUT();
 
 
 
@@ -34,14 +33,20 @@ const sendToOne = async (socket: string, action: string, body: any) => {
         console.log("sendTo:", socket, JSON.stringify(body));
         await apiGateway.postToConnection({
             'ConnectionId': socket,
-            'Data': Buffer.from(JSON.stringify({action: action, body: body})),
+            'Data': Buffer.from(JSON.stringify({ action: action, body: body })),
         }).promise();
     } catch (err) {
-        console.error("sendTo", err);
+        console.error("sendTo, general error:", err);
+        if (err.code == "GoneException") {
+            // Client no longer connected on this socket
+            console.log("Clearing cache entries...");
+            myDB.invalidatePilotCache((await myDB.fetchClientInfo(socket)).pilot_id);
+            myDB.invalidateClientCache(socket);
+        }
     }
 };
 
-const sendToGroup = async (group_id: api.ID, action: string,  msg: any, fromSocket: string) => {
+const sendToGroup = async (group_id: api.ID, action: string, msg: any, fromSocket: string) => {
     if (group_id != api.nullID) {
         const group = await myDB.fetchGroup(group_id);
         if (group == undefined) {
@@ -67,7 +72,7 @@ const sendToGroup = async (group_id: api.ID, action: string,  msg: any, fromSock
                     resolve();
                 }
             }))
-            
+
         });
         await Promise.all(all);
     } else {
@@ -84,7 +89,7 @@ export const $connect = async () => {
 export const $disconnect = async (payload, socket: string) => {
     // console.log('disconnected', socket.id);
     // if pilot was in chat, forget their session
-    myDB.clientDropped(await myDB.fetchSocketInfo(socket));
+    myDB.clientDropped(await myDB.fetchClientInfo(socket));
     return {};
 };
 
@@ -106,13 +111,13 @@ export const $default = async (payload, socket: string) => {
 // ------------------------------------------------------------------------
 export const chatMessage = async (msg: api.ChatMessage, socket: string) => {
     // Check Client Valid
-    const client = await myDB.fetchSocketInfo(socket);
+    const client = await myDB.fetchClientInfo(socket);
     if (client == undefined) return;
 
     // fill in who message came from
     msg.pilot_id = client.pilot_id;
     console.log(`${msg.pilot_id}) Msg:`, msg);
-    
+
     // if no group or invalid group, ignore message
     // TODO: also check pilot is actually in that group
     if (msg.pilot_id == undefined) {
@@ -133,14 +138,10 @@ export const chatMessage = async (msg: api.ChatMessage, socket: string) => {
 // ------------------------------------------------------------------------
 export const pilotTelemetry = async (msg: api.PilotTelemetry, socket: string) => {
     // Check Client Valid
-    const client = await myDB.fetchSocketInfo(socket);
+    const client = await myDB.fetchClientInfo(socket);
     if (client == undefined) return;
 
     msg.pilot_id = client.pilot_id;
-
-    // record the location
-    // TODO: disable this for now
-    // myDB.recordPilotTelemetry(msg);
 
     // if in group, broadcast location
     // TODO: only broadcast if it's recent location update?
@@ -153,7 +154,7 @@ export const pilotTelemetry = async (msg: api.PilotTelemetry, socket: string) =>
 // ------------------------------------------------------------------------
 export const flightPlanSync = async (msg: api.FlightPlanSync, socket: string) => {
     // Check Client Valid
-    const client = await myDB.fetchSocketInfo(socket);
+    const client = await myDB.fetchClientInfo(socket);
     if (client == undefined) return;
 
     const group = (await myDB.fetchPilot(client.pilot_id)).group_id;
@@ -172,7 +173,7 @@ export const flightPlanSync = async (msg: api.FlightPlanSync, socket: string) =>
 // ------------------------------------------------------------------------
 export const flightPlanUpdate = async (msg: api.FlightPlanUpdate, socket: string) => {
     // Check Client Valid
-    const client = await myDB.fetchSocketInfo(socket);
+    const client = await myDB.fetchClientInfo(socket);
     if (client == undefined) return;
 
     const pilot = await myDB.fetchPilot(client.pilot_id);
@@ -246,7 +247,7 @@ export const flightPlanUpdate = async (msg: api.FlightPlanUpdate, socket: string
 // ------------------------------------------------------------------------
 export const pilotSelectedWaypoint = async (msg: api.PilotSelectedWaypoint, socket: string) => {
     // Check Client Valid
-    const client = await myDB.fetchSocketInfo(socket);
+    const client = await myDB.fetchClientInfo(socket);
     if (client == undefined) return;
     const pilot = await myDB.fetchPilot(client.pilot_id);
     if (pilot.group_id == undefined || pilot.group_id == api.nullID) return;
@@ -301,9 +302,7 @@ export const authRequest = async (request: api.AuthRequest, socket: string) => {
         console.log(`${newClient.pilot_id}) Authenticated`);
 
         // Pull the patreon table if it's not already pulled
-        if (userPledges == null) await pullPatreonTable();
-        // fetch tier
-        resp.tier = userPledges[request.tier_hash];
+        resp.tier = await patreon.checkHash(request.tier_hash);
 
         // Can't join a group if it's expired
         const group = await myDB.fetchGroup(request.group);
@@ -341,18 +340,18 @@ export const authRequest = async (request: api.AuthRequest, socket: string) => {
 // ------------------------------------------------------------------------
 export const updateProfileRequest = async (request: api.UpdateProfileRequest, socket: string) => {
     // Check Client Valid
-    const client = await myDB.fetchSocketInfo(socket);
+    const client = await myDB.fetchClientInfo(socket);
     if (client == undefined) return;
 
     let pilot = await myDB.fetchPilot(request.pilot.id);
     if (pilot == undefined) {
         // Unknown pilot.
         // Respond Error.
-        await sendToOne(socket, "updateProfileResponse", {status: api.ErrorCode.invalid_id});
+        await sendToOne(socket, "updateProfileResponse", { status: api.ErrorCode.invalid_id });
     } else if (!myDB.checkSecret(pilot.id, request.secret_id)) {
         // Invalid secret_id
         // Respond Error.
-        await sendToOne(socket, "updateProfileResponse", {status: api.ErrorCode.invalid_secret_id});
+        await sendToOne(socket, "updateProfileResponse", { status: api.ErrorCode.invalid_secret_id });
     } else {
         // update
         console.log(`${client.pilot_id}) Updated profile.`);
@@ -371,7 +370,7 @@ export const updateProfileRequest = async (request: api.UpdateProfileRequest, so
         await sendToGroup(pilot.group_id, "pilotJoinedGroup", notify, socket);
 
         // Respond Success
-        await sendToOne(socket, "updateProfileResponse", {status: api.ErrorCode.success});
+        await sendToOne(socket, "updateProfileResponse", { status: api.ErrorCode.success });
     }
 };
 
@@ -381,7 +380,7 @@ export const updateProfileRequest = async (request: api.UpdateProfileRequest, so
 // ------------------------------------------------------------------------
 export const groupInfoRequest = async (request: api.GroupInfoRequest, socket: string) => {
     // Check Client Valid
-    const client = await myDB.fetchSocketInfo(socket);
+    const client = await myDB.fetchClientInfo(socket);
     if (client == undefined) return;
     const resp: api.GroupInfoResponse = {
         status: api.ErrorCode.unknown_error,
@@ -403,6 +402,7 @@ export const groupInfoRequest = async (request: api.GroupInfoRequest, socket: st
                         id: p,
                         name: pilot.name,
                         avatar_hash: pilot.avatar_hash,
+                        tier: pilot.tier
                     } as api.PilotMeta);
                 }
                 resolve();
@@ -421,7 +421,7 @@ export const groupInfoRequest = async (request: api.GroupInfoRequest, socket: st
 // ------------------------------------------------------------------------
 export const joinGroupRequest = async (request: api.JoinGroupRequest, socket: string) => {
     // Check Client Valid
-    const client = await myDB.fetchSocketInfo(socket);
+    const client = await myDB.fetchClientInfo(socket);
     if (client == undefined) return;
 
     const resp: api.JoinGroupResponse = {

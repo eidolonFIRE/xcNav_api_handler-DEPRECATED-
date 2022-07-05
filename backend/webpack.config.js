@@ -18,6 +18,17 @@ module.exports = {
     new NodePolyfillPlugin()
   ],
 
+    externals: [
+    {
+      'aws-sdk': {
+        root: 'aws-sdk',
+        commonjs2: 'aws-sdk',
+        commonjs: 'aws-sdk',
+        amd: 'aws-sdk'
+      }
+    }
+  ],
+
   resolve: {
     // Add '.ts' and '.tsx' as resolvable extensions.
     extensions: ["", ".webpack.js", ".web.js", ".ts", ".tsx", ".js"],
