@@ -28,7 +28,7 @@ const patreon = new patreonLUT();
 const ENDPOINT = 'cilme82sm3.execute-api.us-west-1.amazonaws.com/production/';
 const apiGateway = new ApiGatewayManagementApi({ endpoint: ENDPOINT });
 
-const sendToOne = async (socket: string, action: string, body: any) => {
+const sendToOne = async (socket: string, action: string, body: any, isRetry = false) => {
     try {
         console.log("sendTo:", socket, JSON.stringify(body));
         await apiGateway.postToConnection({
@@ -39,9 +39,17 @@ const sendToOne = async (socket: string, action: string, body: any) => {
         console.error("sendTo, general error:", err);
         if (err.code == "GoneException") {
             // Client no longer connected on this socket
-            console.log("Clearing cache entries...");
-            myDB.invalidatePilotCache((await myDB.fetchClientInfo(socket)).pilot_id);
+            console.log("Clearing cache entries and retrying.");
+            const client = await myDB.fetchClientInfo(socket);
+            myDB.invalidatePilotCache(client.pilot_id);
             myDB.invalidateClientCache(socket);
+            // Pull fresh socket and retry once
+            const pilot = await myDB.fetchPilot(client.pilot_id);
+            // if the pilot is good and has a viable socket...
+            if ((pilot != undefined) && (pilot.socket != undefined)) {
+                // wait for the send to finish
+                await sendToOne(pilot.socket, action, body, true);
+            }
         }
     }
 };

@@ -176,7 +176,7 @@ export class db_dynamo {
                 TableName: "Groups",
                 Item: {
                     id: group_id,
-                    expires: Date.now() / 1000 + 12 * 60 * 60, // 12 hr
+                    expires: Date.now() / 1000 + 72 * 60 * 60, // 72 hr
                     wp_selections: {},
                 }
             }, function (err, data) {
