@@ -37,7 +37,7 @@ const sendToOne = async (socket: string, action: string, body: any, isRetry = fa
         }).promise();
     } catch (err) {
         console.error("sendTo, general error:", err);
-        if (err.code == "GoneException") {
+        if (err.code == "GoneException" && isRetry == false) {
             // Client no longer connected on this socket
             console.log("Clearing cache entries and retrying.");
             const client = await myDB.fetchClientInfo(socket);
@@ -71,12 +71,18 @@ const sendToGroup = async (group_id: api.ID, action: string, msg: any, fromSocke
                 const pilot = await myDB.fetchPilot(p);
                 // if the pilot is good and has a viable socket...
                 if ((pilot != undefined) && (pilot.socket != undefined) && (pilot.socket != fromSocket)) {
+                    if (pilot.group_id != group_id) {
+                        // We could just have a cache miss here.
+                        myDB.invalidatePilotCache(pilot.id);
+                        myDB.invalidateClientCache(pilot.socket);
+                        // TODO: this could get us in a situation where we keep having cache misses. If a pilot disconnects without leaving group first, we will keep trying to send them messages.
+                    }
                     // wait for the send to finish
                     await sendToOne(pilot.socket, action, msg).then(() => {
                         resolve();
                     });
                 } else {
-                    console.log(`Not sending to: ${p}`);
+                    console.log(`There was some problem. Not sending to: ${p}`);
                     resolve();
                 }
             }))
@@ -127,15 +133,15 @@ export const chatMessage = async (msg: api.ChatMessage, socket: string) => {
     console.log(`${msg.pilot_id}) Msg:`, msg);
 
     // if no group or invalid group, ignore message
-    // TODO: also check pilot is actually in that group
     if (msg.pilot_id == undefined) {
         console.error("Error, we don't know who this socket belongs to!");
         return;
     }
 
-    // record message into log
-    // TODO
-    // myDB.recordChat(msg);
+    if ((await myDB.fetchPilot(client.pilot_id)).group_id != msg.group) {
+        console.error(`${client.pilot_id}) Tried to send message to group they aren't in!`, msg)
+        return;
+    }
 
     // broadcast message to group
     await sendToGroup(msg.group, "chatMessage", msg, socket);
