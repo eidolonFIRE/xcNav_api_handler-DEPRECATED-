@@ -2,7 +2,7 @@
 // | 
 // |  TODO: Version is incrimented manually for now, but in the future we should use formal versioning.
 // |  https://gitversion.readthedocs.io/en/latest/input/docs/configuration/
-export const api_version = 5.2;
+export const api_version = 6.0;
 
 
 
@@ -38,15 +38,15 @@ export interface PilotMeta {
 }
 
 export interface Waypoint {
+    id: ID
     name: string
     latlng: number[][]
-    optional: boolean
     icon?: string
     color?: number
     length?: number
 }
 
-export type FlightPlanData = Waypoint[];
+export type WaypointsData = Record<ID, Waypoint>;
 
 export enum ErrorCode {
     success = 0,
@@ -61,26 +61,9 @@ export enum ErrorCode {
 
 export enum WaypointAction {
     none = 0,
-    new,
-    modify,
+    update,
     delete,
-    sort,
 }
-
-export let MarkerOptions = [
-    "circle",
-    "square",
-    "plus",
-    "minus",
-    "plane-departure",
-    "plane-arrival",
-    "plane",
-    "parachute-box",
-    "exclamation",
-    "question",
-    "broadcast-tower",
-    "gas-pump",
-]
 
 
 // ############################################################################ 
@@ -114,27 +97,25 @@ export interface RemoveMapLayer {
     name: string
 }
 
-// full sync of flight plan data
-export interface FlightPlanSync {
+// full sync of waypoints  data
+export interface WaypointsSync {
     timestamp: Timestamp
-    flight_plan: FlightPlanData
+    waypoints: WaypointsData
 }
 
 // update an individual waypoint
-export interface FlightPlanUpdate {
+export interface WaypointsUpdate {
     timestamp: Timestamp
     hash: string
-    index: number
     action: WaypointAction
-    data?: Waypoint
-    new_index?: number   
+    waypoint: Waypoint
 }
- 
-export type PilotWaypointSelections = Record<ID, number>;
+
+export type PilotWaypointSelections = Record<ID, ID>;
 
 export interface PilotSelectedWaypoint {
     pilot_id: ID
-    index: number
+    waypoint_id: ID
 }
 
 
@@ -173,6 +154,7 @@ export interface AuthRequest {
     pilot: PilotMeta
     group: ID
     tier_hash?: string
+    api_version?: number
 }
 
 export interface AuthResponse {
@@ -209,21 +191,8 @@ export interface GroupInfoResponse {
     status: ErrorCode
     group: ID
     pilots: PilotMeta[]
-    flight_plan: FlightPlanData
-}
-
-// ============================================================================
-// Client request chat history
-// ----------------------------------------------------------------------------
-export interface ChatLogRequest {
-    time_window: Duration
-    group: ID
-}
-
-export interface ChatLogResponse {
-    status: ErrorCode
-    msgs: ChatMessage[]
-    group: ID
+    waypoints: WaypointsData
+    selections: PilotWaypointSelections
 }
 
 // ============================================================================
@@ -252,16 +221,4 @@ export interface LeaveGroupRequest {
 export interface LeaveGroupResponse {
     status: ErrorCode
     group: ID // new group user has created
-}
-
-// ============================================================================
-// Client request for pilot(s) status(es)
-// ----------------------------------------------------------------------------
-export interface PilotsStatusRequest {
-    pilot_ids: ID[]
-}
-
-export interface PilotsStatusResponse {
-    status: ErrorCode
-    pilots_online: Record<ID, boolean>
 }

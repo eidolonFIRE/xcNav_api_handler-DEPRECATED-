@@ -4,9 +4,10 @@ import * as _ from "lodash";
 
 import * as api from "./api";
 import { db_dynamo, Client, Pilot } from "./dynamoDB";
-import { hash_flightPlanData, hash_pilotMeta } from "./apiUtil";
+import { hash_waypointsData, hash_pilotMeta } from "./apiUtil";
 import { patreonLUT } from './patreonLookup';
 
+import * as process from 'process';
 
 
 
@@ -25,7 +26,10 @@ const patreon = new patreonLUT();
     ENDPOINT = 'xxxxxxxxxxx/execute-api.us-east-1.amazonaws.com/production/'
   see minute 7:00 https://youtu.be/BcWD-M2PJ-8?t=420
 */
-const ENDPOINT = 'cilme82sm3.execute-api.us-west-1.amazonaws.com/production/';
+
+
+
+const ENDPOINT = process["env"]["returnEndpoint"] + ".execute-api.us-west-1.amazonaws.com/production/";
 const apiGateway = new ApiGatewayManagementApi({ endpoint: ENDPOINT });
 
 const sendToOne = async (socket: string, action: string, body: any, isRetry = false) => {
@@ -54,7 +58,7 @@ const sendToOne = async (socket: string, action: string, body: any, isRetry = fa
     }
 };
 
-const sendToGroup = async (group_id: api.ID, action: string, msg: any, fromSocket: string) => {
+const sendToGroup = async (group_id: api.ID, action: string, msg: any, fromSocket: string, versionFilter: number = undefined) => {
     if (group_id != api.nullID) {
         const group = await myDB.fetchGroup(group_id);
         if (group == undefined) {
@@ -69,6 +73,15 @@ const sendToGroup = async (group_id: api.ID, action: string, msg: any, fromSocke
             all.push(new Promise(async (resolve) => {
                 // In each promise, get the pilot first
                 const pilot = await myDB.fetchPilot(p);
+
+                if (versionFilter != undefined) {
+                    // Filter by client version number
+                    const client = await myDB.fetchClientInfo(pilot.socket);
+                    if (client.api_version != undefined && client.api_version < versionFilter) {
+                        resolve();
+                    }
+                }
+
                 // if the pilot is good and has a viable socket...
                 if ((pilot != undefined) && (pilot.socket != undefined) && (pilot.socket != fromSocket)) {
                     if (pilot.group_id != group_id) {
@@ -166,7 +179,7 @@ export const pilotTelemetry = async (msg: api.PilotTelemetry, socket: string) =>
 // ========================================================================
 // handle Full copy of flight plan from client
 // ------------------------------------------------------------------------
-export const flightPlanSync = async (msg: api.FlightPlanSync, socket: string) => {
+export const waypointsSync = async (msg: api.WaypointsSync, socket: string) => {
     // Check Client Valid
     const client = await myDB.fetchClientInfo(socket);
     if (client == undefined) return;
@@ -175,17 +188,17 @@ export const flightPlanSync = async (msg: api.FlightPlanSync, socket: string) =>
     if (group) {
         // update the plan
         // TODO: sanity check the data
-        await myDB.pushFlightPlan(group, msg.flight_plan);
+        await myDB.pushWaypoints(group, msg.waypoints);
 
         // relay the flight plan to the group
-        await sendToGroup(group, "flightPlanSync", msg, socket);
+        await sendToGroup(group, "waypointsSync", msg, socket);
     }
 };
 
 // ========================================================================
-// handle Flightplan Updates
+// handle waypoints Updates
 // ------------------------------------------------------------------------
-export const flightPlanUpdate = async (msg: api.FlightPlanUpdate, socket: string) => {
+export const waypointsUpdate = async (msg: api.WaypointsUpdate, socket: string) => {
     // Check Client Valid
     const client = await myDB.fetchClientInfo(socket);
     if (client == undefined) return;
@@ -197,8 +210,8 @@ export const flightPlanUpdate = async (msg: api.FlightPlanUpdate, socket: string
     console.log(`${client.pilot_id}) Waypoint Update`, msg);
 
     // make backup copy of the plan
-    const plan = group.flight_plan || [];
-    const backup = _.cloneDeep(plan);
+    const waypoints = group.waypoints || {};
+    const backup = _.cloneDeep(waypoints);
 
     let should_notify = true;
 
@@ -206,24 +219,12 @@ export const flightPlanUpdate = async (msg: api.FlightPlanUpdate, socket: string
     switch (msg.action) {
         case api.WaypointAction.delete:
             // Delete a waypoint
-            // TODO: verify wp
-            plan.splice(msg.index, 1);
+            delete waypoints[msg.waypoint.id];
             break;
-        case api.WaypointAction.new:
-            // insert a new waypoint
-            plan.splice(msg.index, 0, msg.data);
-
-            break;
-        case api.WaypointAction.sort:
-            // Reorder a waypoint
-            const wp = plan[msg.index];
-            plan.splice(msg.index, 1);
-            plan.splice(msg.new_index, 0, wp);
-            break;
-        case api.WaypointAction.modify:
-            // Make updates to a waypoint
-            if (msg.data != null) {
-                plan[msg.index] = msg.data;
+        case api.WaypointAction.update:
+            // Modify a waypoint
+            if (msg.waypoint != null) {
+                waypoints[msg.waypoint.id] = msg.waypoint;
             } else {
                 should_notify = false;
             }
@@ -234,25 +235,27 @@ export const flightPlanUpdate = async (msg: api.FlightPlanUpdate, socket: string
             break;
     }
 
-    const hash = hash_flightPlanData(plan);
-    if (hash != msg.hash) {
-        // DE-SYNC ERROR
-        // restore backup
-        console.warn(`${client.pilot_id}) Flightplan Desync`, hash, msg.hash, plan);
+    // TODO: hash check disabled for now
+    // const hash = hash_waypointsData(waypoints);
+    // if (hash != msg.hash) {
+    //     // DE-SYNC ERROR
+    //     // restore backup
+    //     console.warn(`${client.pilot_id}) waypoints Desync`, hash, msg.hash, waypoints);
 
-        // assume the client is out of sync, return a full copy of the plan
-        const notify: api.FlightPlanSync = {
-            timestamp: Date.now(),
-            // hash: hash_flightPlanData(backup),
-            flight_plan: backup,
-        }
-        await sendToOne(socket, "flightPlanSync", notify);
-    } else if (should_notify) {
+    //     // assume the client is out of sync, return a full copy of the plan
+    //     const notify: api.WaypointsSync = {
+    //         timestamp: Date.now(),
+    //         // hash: hash_waypointsData(backup),
+    //         waypoints: backup,
+    //     }
+    //     await sendToOne(socket, "waypointsSync", notify);
+    // } else 
+    if (should_notify) {
         // push modified plan back to db
-        await myDB.pushFlightPlan(pilot.group_id, plan);
+        await myDB.pushWaypoints(pilot.group_id, waypoints);
 
         // relay the update to the group
-        await sendToGroup(pilot.group_id, "flightPlanUpdate", msg, socket);
+        await sendToGroup(pilot.group_id, "waypointsUpdate", msg, socket);
     }
 };
 
@@ -269,10 +272,11 @@ export const pilotSelectedWaypoint = async (msg: api.PilotSelectedWaypoint, sock
     console.log(`${client.pilot_id}) Waypoint Selection`, msg);
 
     // Save selection
-    await myDB.setPilotWaypointSelection(pilot.group_id, pilot.id, msg.index);
+    await myDB.setPilotWaypointSelection(pilot.group_id, pilot.id, msg.waypoint_id);
 
     // relay the update to the group
-    await sendToGroup(pilot.group_id, "pilotSelectedWaypoint", msg, socket);
+    // TODO: clean up this version filter later (it's performance hit)
+    await sendToGroup(pilot.group_id, "pilotSelectedWaypoint", msg, socket, 6.0);
 };
 
 
@@ -288,11 +292,11 @@ export const pilotSelectedWaypoint = async (msg: api.PilotSelectedWaypoint, sock
 // Authentication
 // ------------------------------------------------------------------------
 export const authRequest = async (request: api.AuthRequest, socket: string) => {
-    console.log(request);
     let newClient: Client = {
         pilot_id: api.nullID,
         socket: socket,
-        expires: Date.now() / 1000 + 12 * 60 * 60 // 12 hr
+        expires: Date.now() / 1000 + 12 * 60 * 60, // 12 hr
+        api_version: request.api_version,
     };
 
     const resp: api.AuthResponse = {
@@ -301,14 +305,14 @@ export const authRequest = async (request: api.AuthRequest, socket: string) => {
         pilot_id: request.pilot.id,
         pilot_meta_hash: "",
         api_version: api.api_version,
-        group: api.nullID
+        group: api.nullID,
     };
 
     const pilot = await myDB.fetchPilot(request.pilot.id);
     if (pilot != undefined && pilot.secret_id != undefined && pilot.secret_id != "" && pilot.secret_id != request.secret_id) {
         console.warn(`${request.pilot.id}) attempt multiple connection!`);
         resp.status = api.ErrorCode.unknown_error;
-    } else if (request.pilot.name == "") {
+    } else if (request.pilot.name == undefined || request.pilot.name.length < 2) {
         resp.status = api.ErrorCode.missing_data;
     } else {
         // use or create an id
@@ -366,6 +370,10 @@ export const updateProfileRequest = async (request: api.UpdateProfileRequest, so
         // Invalid secret_id
         // Respond Error.
         await sendToOne(socket, "updateProfileResponse", { status: api.ErrorCode.invalid_secret_id });
+    } else if (request.pilot.name == undefined || request.pilot.name.length < 2) {
+        // Invalid name
+        // Respond Error.
+        await sendToOne(socket, "updateProfileResponse", { status: api.ErrorCode.missing_data });
     } else {
         // update
         console.log(`${client.pilot_id}) Updated profile.`);
@@ -400,7 +408,8 @@ export const groupInfoRequest = async (request: api.GroupInfoRequest, socket: st
         status: api.ErrorCode.unknown_error,
         group: request.group,
         pilots: [],
-        flight_plan: []
+        waypoints: {},
+        selections: {}
     };
 
     const group = await myDB.fetchGroup(request.group);
@@ -423,7 +432,8 @@ export const groupInfoRequest = async (request: api.GroupInfoRequest, socket: st
             }));
         });
         await Promise.all(all);
-        resp.flight_plan = group.flight_plan;
+        resp.waypoints = group.waypoints;
+        resp.selections = group.selections;
     }
     console.log(`${client.pilot_id}) requested group (${request.group}), status: ${resp.status}, pilots: ${resp.pilots}`);
     await sendToOne(socket, "groupInfoResponse", resp);

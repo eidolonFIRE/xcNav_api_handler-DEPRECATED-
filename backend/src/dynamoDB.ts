@@ -12,14 +12,15 @@ export interface Pilot extends api.PilotMeta {
 export interface Group {
     pilots: Set<api.ID>
     chat: api.ChatMessage[]
-    flight_plan: api.FlightPlanData
-    wp_selections: api.PilotWaypointSelections
+    waypoints: api.WaypointsData
+    selections: api.PilotWaypointSelections
 }
 
 export interface Client {
     pilot_id: api.ID
     socket: string
     expires: number
+    api_version?: number
 }
 
 interface CachedPilot {
@@ -114,8 +115,8 @@ export class db_dynamo {
                 return {
                     pilots: new Set(_group.pilots?.values || []),
                     chat: _group.chat,
-                    flight_plan: JSON.parse(_group.flight_plan || "[]"),
-                    wp_selections: _group.wp_selections
+                    waypoints: JSON.parse(_group.flight_plan || "[]"),
+                    selections: _group.selections
                 } as Group;
             } else {
                 return undefined;
@@ -253,7 +254,7 @@ export class db_dynamo {
         }
     }
 
-    async pushFlightPlan(group_id: api.ID, plan: api.FlightPlanData): Promise<any> {
+    async pushWaypoints(group_id: api.ID, waypoints: api.WaypointsData): Promise<any> {
         // Update Pilot
         return this.db.update({
             TableName: "Groups",
@@ -262,7 +263,7 @@ export class db_dynamo {
             },
             UpdateExpression: "SET flight_plan = :_flight_plan",
             ExpressionAttributeValues: {
-                ":_flight_plan": JSON.stringify(plan, (key, val) => {
+                ":_flight_plan": JSON.stringify(waypoints, (key, val) => {
                     return typeof val === 'number' ? Number(val.toFixed(5)) : val;
                 })
             }
@@ -272,19 +273,19 @@ export class db_dynamo {
         }).promise();
     }
 
-    async setPilotWaypointSelection(group_id: api.ID, pilot_id: api.ID, index: number): Promise<any> {
+    async setPilotWaypointSelection(group_id: api.ID, pilot_id: api.ID, waypoint_id: api.ID): Promise<any> {
         // Update Group
         return this.db.update({
             TableName: "Groups",
             Key: {
                 id: group_id,
             },
-            UpdateExpression: "SET wp_selections.#pilot_id = :index",
+            UpdateExpression: "SET wp_selections.#pilot_id = :waypoint_id",
             ExpressionAttributeNames: {
                 '#pilot_id': pilot_id,
             },
             ExpressionAttributeValues: {
-                ':index': index,
+                ':waypoint_id': waypoint_id,
             },
         }, function (err, data) {
             if (err) console.log(err);

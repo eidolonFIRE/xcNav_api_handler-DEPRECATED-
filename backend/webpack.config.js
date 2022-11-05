@@ -5,8 +5,9 @@ const NodePolyfillPlugin = require("node-polyfill-webpack-plugin");
 
 module.exports = {
   entry: "./src/index.ts",
-  mode: 'development',
+  mode: 'production',
   target: "node",
+
   output: {
     filename: "./[name].js",
     path: path.resolve(__dirname, 'dist'),
@@ -15,7 +16,7 @@ module.exports = {
     libraryTarget: 'commonjs'
   },
   plugins: [
-    new NodePolyfillPlugin()
+    new NodePolyfillPlugin(),
   ],
 
     externals: [

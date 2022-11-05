@@ -2,23 +2,21 @@ import { LambdaActions } from 'lambda-actions';
 import * as Actions from './actions';
 import { config } from 'aws-sdk';
 
-config.update({region: "us-west-1"});
+config.update({ region: "us-west-1" });
 
 
 
 async function lambdaHandler(event, context) {
-  
-  
+
+
 
   if (!event.requestContext) {
     return {};
   }
 
-  console.log("Event: ", event);
-
   try {
-
     const connectionId = event.requestContext.connectionId;
+    // const connectionId = event.requestContext.extendedConnectionId
     const routeKey = event.requestContext.routeKey;
     const body = JSON.parse(event.body || '{}');
 
@@ -32,8 +30,8 @@ async function lambdaHandler(event, context) {
     lambdaActions.action("pilotTelemetry", Actions.pilotTelemetry);
     lambdaActions.action("groupInfoRequest", Actions.groupInfoRequest);
     lambdaActions.action("joinGroupRequest", Actions.joinGroupRequest);
-    lambdaActions.action("flightPlanSync", Actions.flightPlanSync);
-    lambdaActions.action("flightPlanUpdate", Actions.flightPlanUpdate);
+    lambdaActions.action("waypointsSync", Actions.waypointsSync);
+    lambdaActions.action("waypointsUpdate", Actions.waypointsUpdate);
     lambdaActions.action("pilotSelectedWaypoint", Actions.pilotSelectedWaypoint);
 
     await lambdaActions.fire({
@@ -41,8 +39,8 @@ async function lambdaHandler(event, context) {
       payload: body["body"],
       meta: connectionId,
     });
-
   } catch (err) {
+    console.log("Event: ", event);
     console.error(err);
   }
 

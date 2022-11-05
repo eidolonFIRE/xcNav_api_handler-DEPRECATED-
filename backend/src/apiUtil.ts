@@ -1,18 +1,18 @@
 import * as api from "./api";
 
 
-// Custom high-speed dirty hash for checking flightplan changes
-export function hash_flightPlanData(plan: api.FlightPlanData): string {
+// Custom high-speed dirty hash for checking waypoints changes
+export function hash_waypointsData(plan: api.WaypointsData): string {
     // build long string
     let str = "Plan";
-    plan.forEach((wp, i) => {
-        str += i + wp.name + (wp.icon ?? "") + (wp.color ?? "") + (wp.optional ? "O" : "X");
-        wp.latlng.forEach((g) => {
+    Object.keys(plan).forEach((wp, i) => {
+        str += wp + plan[wp].name + (plan[wp].icon ?? "") + (plan[wp].color ?? "");
+        plan[wp].latlng.forEach((g) => {
             // large tolerance for floats
             str += g[0].toFixed(5) + g[1].toFixed(5);
         });
     });
-    
+
     // fold string into hash
     let hash = 0;
     for (let i = 0, len = str.length; i < len; i++) {
@@ -26,7 +26,7 @@ export function hash_flightPlanData(plan: api.FlightPlanData): string {
 export function hash_pilotMeta(pilot: api.PilotMeta): string {
     // build long string
     const str = "Meta" + pilot.name + pilot.id + pilot.avatar_hash + (pilot.tier || "");
-    
+
     // fold string into hash
     let hash = 0;
     for (let i = 0, len = str.length; i < len; i++) {
