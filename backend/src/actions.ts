@@ -73,6 +73,7 @@ const sendToGroup = async (group_id: api.ID, action: string, msg: any, fromSocke
             all.push(new Promise(async (resolve) => {
                 // In each promise, get the pilot first
                 const pilot = await myDB.fetchPilot(p);
+                if (pilot.socket == fromSocket) resolve();
 
                 if (versionFilter != undefined) {
                     // Filter by client version number
@@ -83,7 +84,7 @@ const sendToGroup = async (group_id: api.ID, action: string, msg: any, fromSocke
                 }
 
                 // if the pilot is good and has a viable socket...
-                if ((pilot != undefined) && (pilot.socket != undefined) && (pilot.socket != fromSocket)) {
+                if ((pilot != undefined) && (pilot.socket != undefined)) {
                     if (pilot.group_id != group_id) {
                         // We could just have a cache miss here.
                         myDB.invalidatePilotCache(pilot.id);
